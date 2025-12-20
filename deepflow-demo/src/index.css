@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ios-gray: #f2f2f7;
+  --color-ios-blue: #007aff;
+  --color-ios-green: #34c759;
+  --color-ios-red: #ff3b30;
+}
+
+@layer base {
+  body {
+    @apply bg-neutral-100 text-neutral-900 antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-white/70 backdrop-blur-xl border border-white/20 shadow-lg;
+  }
+  .ios-btn {
+    @apply active:scale-95 transition-transform duration-200;
+  }
+}
