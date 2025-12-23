@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { IncomingForm, File as FormidableFile } from 'formidable';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
-import { promptManager } from '../server/prompts/index.js';
+import { promptManager } from './prompts/index.js';
 import fs from 'fs';
 import mammoth from 'mammoth';
 import { createRequire } from 'module';
@@ -208,8 +208,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.json(parsedData);
   } catch (error: any) {
     console.error("Error processing request:", error);
-    const errorMessage = error?.message || String(error) || "Internal Server Error";
-    res.status(500).json({ error: errorMessage });
+    console.error("Error stack:", error?.stack);
+    
+    // Provide more detailed error information
+    let errorMessage = error?.message || String(error) || "Internal Server Error";
+    
+    // Check for specific error types
+    if (errorMessage.includes('promptManager') || errorMessage.includes('prompt')) {
+      errorMessage = `配置错误：无法加载提示模板管理器。请检查 prompts 目录是否存在。\n\n原始错误: ${errorMessage}`;
+    } else if (errorMessage.includes('GEMINI_API_KEY') || errorMessage.includes('API Key')) {
+      errorMessage = `配置错误：Gemini API Key 未配置。请在 Vercel 环境变量中设置 GEMINI_API_KEY。\n\n原始错误: ${errorMessage}`;
+    } else if (errorMessage.includes('fetch failed') || errorMessage.includes('timeout')) {
+      errorMessage = `网络错误：无法连接到 Google API 服务器。\n\n原始错误: ${errorMessage}`;
+    }
+    
+    res.status(500).json({ 
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? error?.stack : undefined
+    });
   }
 }
 
