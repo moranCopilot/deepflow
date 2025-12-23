@@ -17,6 +17,33 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const WordExtractor = require('word-extractor');
 
+// Configure global proxy for all HTTP/HTTPS requests
+if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY) {
+  const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+  
+  // Configure global-agent for http/https modules (used by axios, etc.)
+  const { bootstrap } = require('global-agent');
+  if (!process.env.GLOBAL_AGENT_HTTP_PROXY && process.env.HTTP_PROXY) {
+    process.env.GLOBAL_AGENT_HTTP_PROXY = process.env.HTTP_PROXY;
+  }
+  if (!process.env.GLOBAL_AGENT_HTTPS_PROXY && process.env.HTTPS_PROXY) {
+    process.env.GLOBAL_AGENT_HTTPS_PROXY = process.env.HTTPS_PROXY;
+  }
+  bootstrap();
+  
+  // Configure undici (Node.js 18+ fetch) to use proxy
+  try {
+    const { ProxyAgent, setGlobalDispatcher } = require('undici');
+    const proxyAgent = new ProxyAgent(proxyUrl);
+    setGlobalDispatcher(proxyAgent);
+    console.log(`✅ Undici proxy configured: ${proxyUrl}`);
+  } catch (e) {
+    console.warn('⚠️  Could not configure undici proxy:', e);
+  }
+  
+  console.log(`✅ Global proxy configured: ${proxyUrl}`);
+}
+
 const app = express();
 const port = config.port;
 
@@ -157,18 +184,35 @@ app.post('/api/analyze', upload.array('files'), async (req, res): Promise<any> =
              fs.writeFileSync(txtPath, textContent);
              
              // Upload the TEXT file instead
-             const uploadResponse = await fileManager.uploadFile(txtPath, {
-                mimeType: 'text/plain',
-                displayName: originalName + '.txt',
-             });
-             
-             console.log(`Uploaded converted text for ${originalName} as ${uploadResponse.file.name}`);
-             uploadResponses.push(uploadResponse);
-             
-             // Clean up
-             fs.unlinkSync(txtPath);
-             fs.unlinkSync(file.path);
-             continue; // Skip standard upload
+             try {
+               const uploadResponse = await fileManager.uploadFile(txtPath, {
+                  mimeType: 'text/plain',
+                  displayName: originalName + '.txt',
+               });
+               
+               console.log(`Uploaded converted text for ${originalName} as ${uploadResponse.file.name}`);
+               uploadResponses.push(uploadResponse);
+               
+               // Clean up
+               fs.unlinkSync(txtPath);
+               fs.unlinkSync(file.path);
+               continue; // Skip standard upload
+             } catch (uploadError: any) {
+               // Clean up on error
+               if (fs.existsSync(txtPath)) {
+                 fs.unlinkSync(txtPath);
+               }
+               if (fs.existsSync(file.path)) {
+                 fs.unlinkSync(file.path);
+               }
+               
+               // Check if it's a network error
+               const errorMessage = uploadError?.message || String(uploadError);
+               if (errorMessage.includes('fetch failed') || errorMessage.includes('timeout') || errorMessage.includes('ECONNREFUSED')) {
+                 throw new Error(`无法连接到 Google API 服务器。请检查：\n1. 网络连接是否正常\n2. 是否需要配置代理（如果在中国大陆）\n3. API Key 是否有效\n\n原始错误: ${errorMessage}`);
+               }
+               throw uploadError;
+             }
 
           } catch (conversionError) {
               console.error(`Failed to convert ${originalName}:`, conversionError);
@@ -185,16 +229,30 @@ app.post('/api/analyze', upload.array('files'), async (req, res): Promise<any> =
 
       // Standard Upload for supported types (PDF, Image, Audio, Video)
       // Use the fixed originalName for display
-      const uploadResponse = await fileManager.uploadFile(file.path, {
-        mimeType: file.mimetype,
-        displayName: originalName,
-      });
-      
-      console.log(`Uploaded ${originalName} as ${uploadResponse.file.name}`);
-      uploadResponses.push(uploadResponse);
+      try {
+        const uploadResponse = await fileManager.uploadFile(file.path, {
+          mimeType: file.mimetype,
+          displayName: originalName,
+        });
+        
+        console.log(`Uploaded ${originalName} as ${uploadResponse.file.name}`);
+        uploadResponses.push(uploadResponse);
 
-      // Clean up local file immediately after upload
-      fs.unlinkSync(file.path);
+        // Clean up local file immediately after upload
+        fs.unlinkSync(file.path);
+      } catch (uploadError: any) {
+        // Clean up local file on error
+        if (fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
+        
+        // Check if it's a network error
+        const errorMessage = uploadError?.message || String(uploadError);
+        if (errorMessage.includes('fetch failed') || errorMessage.includes('timeout') || errorMessage.includes('ECONNREFUSED')) {
+          throw new Error(`无法连接到 Google API 服务器。请检查：\n1. 网络连接是否正常\n2. 是否需要配置代理（如果在中国大陆）\n3. API Key 是否有效\n\n原始错误: ${errorMessage}`);
+        }
+        throw uploadError;
+      }
     }
 
     // 2. Wait for processing
@@ -275,7 +333,17 @@ app.post('/api/analyze', upload.array('files'), async (req, res): Promise<any> =
 
   } catch (error: any) {
     console.error("Error processing request:", error);
-    res.status(500).json({ error: error.message || "Internal Server Error" });
+    const errorMessage = error?.message || String(error) || "Internal Server Error";
+    
+    // Provide more helpful error messages
+    let userFriendlyMessage = errorMessage;
+    if (errorMessage.includes('无法连接到 Google API')) {
+      userFriendlyMessage = errorMessage;
+    } else if (errorMessage.includes('fetch failed') || errorMessage.includes('timeout')) {
+      userFriendlyMessage = `网络连接失败：无法访问 Google API 服务器。\n\n可能的原因：\n1. 网络连接问题\n2. 需要配置代理（如果在中国大陆）\n3. 防火墙阻止了连接\n\n原始错误: ${errorMessage}`;
+    }
+    
+    res.status(500).json({ error: userFriendlyMessage });
   }
 });
 

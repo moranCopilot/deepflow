@@ -221,16 +221,38 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         formData.append('preferences', JSON.stringify(generationPreferences));
 
         // Use the new API
-        const response = await fetch('http://localhost:3000/api/analyze', {
-            method: 'POST',
-            body: formData,
-        });
+        let response: Response;
+        try {
+            response = await fetch('http://localhost:3000/api/analyze', {
+                method: 'POST',
+                body: formData,
+            });
+        } catch (fetchError: any) {
+            // Network error - backend is likely not running or CORS issue
+            console.error("Network error:", fetchError);
+            throw new Error('NETWORK_ERROR');
+        }
 
         if (!response.ok) {
-            throw new Error(`Server error: ${response.statusText}`);
+            // Try to parse error message from response
+            let errorMessage = `服务器错误: ${response.status} ${response.statusText}`;
+            try {
+                const errorData = await response.json();
+                if (errorData.error) {
+                    errorMessage = errorData.error;
+                }
+            } catch (e) {
+                // If response is not JSON, use default message
+            }
+            throw new Error(`HTTP_ERROR|${response.status}|${errorMessage}`);
         }
 
         const data = await response.json();
+        
+        // Check if response contains error
+        if (data.error) {
+            throw new Error(`SERVER_ERROR|${data.error}`);
+        }
         
         // Archive raw inputs
         setArchivedInputs(prev => [...prev, ...rawInputs]);
@@ -277,9 +299,26 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         setReadyToFlow(true);
         setShowInputPanel(false);
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Failed to generate flow list:", error);
-        alert("生成失败，请检查后端服务是否启动 (npm run dev in server folder)");
+        
+        let errorMessage = "生成失败";
+        
+        if (error.message === 'NETWORK_ERROR') {
+            errorMessage = "生成失败，无法连接到后端服务\n\n请检查：\n1. 后端服务是否已启动 (npm run dev in server folder)\n2. 后端服务是否运行在 http://localhost:3000";
+        } else if (error.message.startsWith('HTTP_ERROR|')) {
+            const parts = error.message.split('|');
+            const statusCode = parts[1];
+            const httpError = parts.slice(2).join('|');
+            errorMessage = `生成失败 (HTTP ${statusCode})\n\n${httpError}\n\n请检查后端服务日志。`;
+        } else if (error.message.startsWith('SERVER_ERROR|')) {
+            const serverError = error.message.replace('SERVER_ERROR|', '');
+            errorMessage = `生成失败: ${serverError}`;
+        } else {
+            errorMessage = `生成失败: ${error.message || '未知错误'}\n\n请检查后端服务是否启动 (npm run dev in server folder)`;
+        }
+        
+        alert(errorMessage);
     } finally {
         setIsGenerating(false);
     }
