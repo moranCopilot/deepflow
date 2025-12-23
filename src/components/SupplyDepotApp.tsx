@@ -1,5 +1,5 @@
-import { useState, useRef, type MouseEvent, type Dispatch, type SetStateAction, useEffect } from 'react';
-import { Camera, FileText, Mic, Package, Play, Pause, Loader2, Sparkles, Brain, Coffee, Library, Tag, List, Calendar, X, AlignLeft, Users, Radio, MessageCircle, Plus, ChevronUp, Music, CheckCircle, Circle, ChevronLeft, ChevronRight, AlertCircle, Mic2, Square, Copy, Check, Trash2 } from 'lucide-react';
+import { useState, useRef, type Dispatch, type SetStateAction, useEffect } from 'react';
+import { Camera, FileText, Mic, Package, Play, Pause, Loader2, Sparkles, Brain, Coffee, Library, Tag, X, AlignLeft, Radio, MessageCircle, Plus, AlertCircle, Mic2, Square, Copy, Check, Trash2, Car, Home, Focus, Moon, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 import { useLiveSession } from '../hooks/useLiveSession';
 import { PackingAnimation } from './PackingAnimation';
@@ -21,6 +21,8 @@ interface RawInput {
     timestamp: number;
 }
 
+type SceneTag = 'commute' | 'home_charge' | 'focus' | 'sleep_meditation' | 'qa_memory' | 'daily_review' | 'default';
+
 interface FlowItem {
     id: string;
     title: string;
@@ -35,6 +37,16 @@ interface FlowItem {
     contentType: 'output' | 'discussion' | 'interactive';
     script?: { speaker: string; text: string }[];
     knowledgeCards?: KnowledgeCard[];
+    sceneTag?: SceneTag;
+    playbackProgress?: {
+        startedAt?: number;
+        lastPlayedAt?: number;
+        totalPlayedSeconds?: number;
+        progressPercentage?: number;
+        hasStarted?: boolean;
+    };
+    isGenerating?: boolean;
+    generationProgress?: string;
 }
 
 interface SupplyDepotAppProps {
@@ -59,14 +71,14 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
   const [generationProgress, setGenerationProgress] = useState<string>('');
   const [readyToFlow, setReadyToFlow] = useState(false);
   const [gardenTab, setGardenTab] = useState<'cards' | 'files'>('cards');
-  const [flowViewMode, setFlowViewMode] = useState<'scenes' | 'list'>('scenes');
   const [selectedItem, setSelectedItem] = useState<FlowItem | null>(null);
   const [filterPreset, setFilterPreset] = useState('all');
   const [showInputPanel, setShowInputPanel] = useState(false);
   const [isGardenOpen, setIsGardenOpen] = useState(false);
-  const [playlistSelection, setPlaylistSelection] = useState<Set<string>>(new Set());
-  const [isPlaylistExpanded, setIsPlaylistExpanded] = useState(false);
   const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{ show: boolean; fileId: string | null; fileName: string | null }>({ show: false, fileId: null, fileName: null });
+  
+  // 今日复盘相关状态
+  const [hasTriggeredReview, setHasTriggeredReview] = useState(false);
 
   // Generation Preferences
   const [genPreset, setGenPreset] = useState('quick_summary');
@@ -81,6 +93,324 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
       quick_summary: { label: '速听精华', duration: 'short', mode: 'single', type: 'output' },
       deep_analysis: { label: '深度剖析', duration: 'long', mode: 'dual', type: 'discussion' },
       interactive_practice: { label: '提问练习', duration: 'medium', mode: 'dual', type: 'interactive' }
+  };
+
+  // 场景标签体系定义
+  const SCENE_CONFIGS: Record<SceneTag, { tag: SceneTag; label: string; icon: any; description: string }> = {
+    commute: {
+      tag: 'commute',
+      label: '回家路上',
+      icon: Car,
+      description: '通勤、步行或驾驶途中'
+    },
+    home_charge: {
+      tag: 'home_charge',
+      label: '在家充电',
+      icon: Home,
+      description: '居家恢复'
+    },
+    focus: {
+      tag: 'focus',
+      label: '静坐专注',
+      icon: Focus,
+      description: '专注学习'
+    },
+    sleep_meditation: {
+      tag: 'sleep_meditation',
+      label: '睡前冥想',
+      icon: Moon,
+      description: '睡前放松'
+    },
+    qa_memory: {
+      tag: 'qa_memory',
+      label: '问答式记忆',
+      icon: MessageCircle,
+      description: '记忆强化'
+    },
+    daily_review: {
+      tag: 'daily_review',
+      label: '今日复盘',
+      icon: RefreshCw,
+      description: '今日学习复盘'
+    },
+    default: {
+      tag: 'default',
+      label: '默认',
+      icon: Radio,
+      description: '通用场景'
+    }
+  };
+
+  // 场景标签映射函数
+  const getSceneTagFromTitle = (title: string, contentCategory?: string, sceneTag?: SceneTag, summary?: string): SceneTag => {
+    // 如果后端返回了 sceneTag，优先使用
+    if (sceneTag && SCENE_CONFIGS[sceneTag]) {
+      return sceneTag;
+    }
+    
+    // 根据文件名前缀推断
+    if (title.startsWith('回家路上：')) return 'commute';
+    if (title.startsWith('静坐专注：')) return 'focus';
+    if (title.startsWith('问答式记忆：')) return 'qa_memory';
+    if (title.startsWith('在家充电：')) return 'home_charge';
+    if (title === '睡前冥想' || title.startsWith('睡前冥想')) return 'sleep_meditation';
+    
+    // 根据内容类型推断
+    if (contentCategory === 'history') return 'commute';
+    if (contentCategory === 'math_geometry') return 'focus';
+    if (contentCategory === 'language') return 'qa_memory';
+    
+    // 根据标题和摘要中的关键词推断（用于问答式记忆）
+    const textToCheck = `${title} ${summary || ''}`.toLowerCase();
+    const qaMemoryKeywords = ['语文', '古诗', '诗文', '诗词', '文言文', 'english', '英语', 'language'];
+    if (qaMemoryKeywords.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
+      return 'qa_memory';
+    }
+    
+    // 根据标题和摘要中的关键词推断（用于历史相关）
+    const historyKeywords = ['历史', 'history', '古代', '朝代', '历史事件'];
+    if (historyKeywords.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
+      return 'commute';
+    }
+    
+    // 根据标题和摘要中的关键词推断（用于数学几何）
+    const mathKeywords = ['数学', '几何', 'math', 'geometry', '几何图形', '数学题'];
+    if (mathKeywords.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
+      return 'focus';
+    }
+    
+    return 'default';
+  };
+
+  // 文件名前缀映射
+  const prefixMap: Record<string, string> = {
+    'history': '回家路上：',
+    'math_geometry': '静坐专注：',
+    'language': '问答式记忆：'
+  };
+
+  // 预生成 FlowItem 定义（带生成状态）
+  const getDefaultFlowItems = (): FlowItem[] => [
+    {
+      id: 'default-1',
+      title: '睡前冥想',
+      duration: '10:00',
+      type: 'meditation',
+      tldr: '放松身心，准备入睡',
+      subtitles: [],
+      status: 'ready',
+      scenes: ['casual'],
+      subject: 'wellness',
+      mode: 'single',
+      contentType: 'output',
+      sceneTag: 'sleep_meditation',
+      isGenerating: true,
+      generationProgress: '正在生成中...',
+      playbackProgress: { hasStarted: false }
+    },
+    {
+      id: 'default-2',
+      title: '听首歌放松一下',
+      duration: '5:00',
+      type: 'music',
+      tldr: '轻松音乐，放松心情',
+      subtitles: [],
+      status: 'ready',
+      scenes: ['casual'],
+      subject: 'music',
+      mode: 'single',
+      contentType: 'output',
+      sceneTag: 'sleep_meditation',
+      isGenerating: true,
+      generationProgress: '正在生成中...',
+      playbackProgress: { hasStarted: false }
+    },
+    {
+      id: 'default-3',
+      title: '在家充电：科技时事',
+      duration: '15:00',
+      type: 'tech',
+      tldr: '了解最新科技动态',
+      subtitles: [],
+      status: 'ready',
+      scenes: ['casual'],
+      subject: 'tech',
+      mode: 'single',
+      contentType: 'output',
+      sceneTag: 'home_charge',
+      isGenerating: true,
+      generationProgress: '正在生成中...',
+      playbackProgress: { hasStarted: false }
+    }
+  ];
+
+
+  // 复盘上下文收集函数
+  interface ReviewContext {
+    items: Array<{
+      id: string;
+      title: string;
+      playbackProgress: {
+        totalPlayedSeconds: number;
+        progressPercentage: number;
+      };
+      content: string;
+      sceneTag: SceneTag;
+      contentType: string;
+      dialogueContent?: Array<{ speaker: string; text: string }>;
+    }>;
+    knowledgeCards: Array<{
+      title: string;
+      content: string;
+      tags: string[];
+      timestamp: Date;
+    }>;
+  }
+
+  const collectReviewContext = (): ReviewContext => {
+    // 筛选已播放的 items（至少5条）
+    const playedItems = flowItems
+      .filter(item => item.playbackProgress?.hasStarted === true)
+      .slice(0, 10); // 最多取10条
+    
+    const items = playedItems.map(item => ({
+      id: item.id,
+      title: item.title,
+      playbackProgress: {
+        totalPlayedSeconds: item.playbackProgress?.totalPlayedSeconds || 0,
+        progressPercentage: item.playbackProgress?.progressPercentage || 0
+      },
+      content: item.tldr || (item.script ? item.script.map(s => s.text).join(' ') : ''),
+      sceneTag: item.sceneTag || 'default',
+      contentType: item.contentType,
+      dialogueContent: item.sceneTag === 'qa_memory' && item.script ? item.script : undefined
+    }));
+
+    // 收集知识卡片（最近的相关卡片）
+    const recentKnowledgeCards = knowledgeCards
+      .slice(0, 10)
+      .map(card => ({
+        title: card.title,
+        content: card.content,
+        tags: card.tags,
+        timestamp: card.timestamp
+      }));
+
+    return {
+      items,
+      knowledgeCards: recentKnowledgeCards
+    };
+  };
+
+  // 触发今日复盘
+  const triggerDailyReview = async () => {
+    // 1. 立即插入"正在生成中"的占位 Item
+    const placeholderItem: FlowItem = {
+      id: `review-placeholder-${Date.now()}`,
+      title: '今日复盘',
+      duration: '--:--',
+      type: 'review',
+      tldr: '正在生成中...',
+      subtitles: [],
+      status: 'ready',
+      scenes: ['casual'],
+      subject: 'review',
+      mode: 'single',
+      contentType: 'output',
+      sceneTag: 'daily_review',
+      isGenerating: true,
+      generationProgress: '正在分析你的学习内容...',
+      playbackProgress: {
+        hasStarted: false
+      }
+    };
+    
+    // 插入占位 Item 到列表最前面
+    setFlowItems(prev => [placeholderItem, ...prev]);
+    
+    try {
+      // 2. 收集上下文
+      const context = collectReviewContext();
+      
+      // 3. 更新占位 Item 的生成进度
+      setFlowItems(prev => prev.map(item => 
+        item.id === placeholderItem.id 
+          ? { ...item, generationProgress: '正在生成复盘内容...' }
+          : item
+      ));
+      
+      // 4. 调用后端 API 生成脚本
+      const reviewResponse = await fetch(getApiUrl('/api/review'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(context)
+      });
+      
+      if (!reviewResponse.ok) {
+        throw new Error(`API 错误: ${reviewResponse.status}`);
+      }
+      
+      const reviewData = await reviewResponse.json();
+      
+      // 5. 更新生成进度
+      setFlowItems(prev => prev.map(item => 
+        item.id === placeholderItem.id 
+          ? { ...item, generationProgress: '正在生成音频...' }
+          : item
+      ));
+      
+      // 6. 生成 TTS 音频
+      const scriptText = reviewData.script.map((s: { speaker: string; text: string }) => s.text).join('\n');
+      const ttsResponse = await fetch(getApiUrl('/api/tts'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: scriptText })
+      });
+      
+      if (!ttsResponse.ok) {
+        throw new Error(`TTS API 错误: ${ttsResponse.status}`);
+      }
+      
+      await ttsResponse.json(); // TTS 音频已生成，这里不需要使用返回值
+      
+      // 7. 替换占位 Item 为实际的 FlowItem
+      const reviewItem: FlowItem = {
+        id: placeholderItem.id,  // 保持相同的 ID
+        title: reviewData.title || '今日复盘',
+        duration: '10:00', // 估算或从 TTS 获取
+        type: 'review',
+        tldr: reviewData.summary || '今日学习复盘总结',
+        subtitles: reviewData.script.map((line: { speaker: string; text: string }, index: number) => ({
+          time: `00:${index < 10 ? '0' + index : index}0`,
+          text: line.text
+        })),
+        status: 'ready',
+        scenes: ['casual'],
+        subject: 'review',
+        mode: 'single',
+        contentType: 'output',
+        script: reviewData.script,
+        sceneTag: 'daily_review',
+        isGenerating: false,
+        playbackProgress: {
+          hasStarted: false
+        }
+      };
+      
+      // 替换占位 Item
+      setFlowItems(prev => prev.map(item => 
+        item.id === placeholderItem.id ? reviewItem : item
+      ));
+      
+      // 8. 标记已触发
+      setHasTriggeredReview(true);
+    } catch (error) {
+      // 生成失败，移除占位 Item 或显示错误状态
+      console.error('复盘生成失败:', error);
+      setFlowItems(prev => prev.filter(item => item.id !== placeholderItem.id));
+      // 可选：显示错误提示
+      alert('复盘生成失败，请稍后重试');
+    }
   };
 
   useEffect(() => {
@@ -121,8 +451,11 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
 
 
   // Audio Player State
-  const [audioUrls, setAudioUrls] = useState<{url: string, shortText: string}[]>([]);
-  const [currentAudioIndex, setCurrentAudioIndex] = useState(0);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioParts, setAudioParts] = useState<string[]>([]);
+  const [currentPartIndex, setCurrentPartIndex] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -199,147 +532,185 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
   }, [playbackRate]);
 
   useEffect(() => {
-      if (audioRef.current && audioUrls.length > 0) {
-          audioRef.current.load(); // Reload audio source
-          audioRef.current.play().catch(e => console.log("Auto-play prevented/pending interaction", e));
-      }
-  }, [currentAudioIndex, audioUrls]);
-
-  // Calculate and update actual audio duration when audio URLs are loaded
-  useEffect(() => {
-    if (audioUrls.length > 0 && selectedItem) {
-      let isCancelled = false;
-      
-      // Calculate total duration of all audio segments
-      const audioPromises = audioUrls.map(urlObj => {
-        return new Promise<number>((resolve) => {
-          const audio = new Audio(urlObj.url);
-          const handleLoadedMetadata = () => {
-            if (!isCancelled) {
-              resolve(audio.duration || 0);
-            }
-            audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-            audio.removeEventListener('error', handleError);
-          };
-          const handleError = () => {
-            if (!isCancelled) {
-              resolve(0);
-            }
-            audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-            audio.removeEventListener('error', handleError);
-          };
-          
-          audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-          audio.addEventListener('error', handleError);
-          
-          // Timeout fallback (5 seconds)
-          setTimeout(() => {
-            if (!isCancelled) {
-              resolve(0);
-              audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-              audio.removeEventListener('error', handleError);
-            }
-          }, 5000);
-        });
+    if (audioUrl && audioRef.current) {
+      audioRef.current.play().catch(err => {
+        console.error('Play failed:', err);
+        setAudioError('播放失败，请重试');
       });
-      
-      Promise.all(audioPromises).then(durations => {
-        if (isCancelled) return;
-        
-        const totalDuration = durations.reduce((sum, d) => sum + d, 0);
-        if (totalDuration > 0 && selectedItem) {
-          const minutes = Math.floor(totalDuration / 60);
-          const seconds = Math.floor(totalDuration % 60);
-          const formattedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-          
-          // Only update if duration changed and item still exists
-          setFlowItems(prev => prev.map(item => {
-            if (item.id === selectedItem.id && item.duration !== formattedDuration) {
-              console.log(`Updating duration for ${item.title}: ${item.duration} -> ${formattedDuration}`);
-              return { ...item, duration: formattedDuration };
-            }
-            return item;
-          }));
-        }
-      });
-      
-      return () => {
-        isCancelled = true;
-      };
     }
-  }, [audioUrls, selectedItem]);
+  }, [audioUrl]);
+
+  // 时间格式化函数
+  const formatTime = (seconds: number): string => {
+    if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // 进度条拖动处理
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newTime = parseFloat(e.target.value);
+    if (audioRef.current) {
+      audioRef.current.currentTime = newTime;
+      setCurrentTime(newTime);
+    }
+  };
+
+  // 辅助函数：将时长字符串转换为秒数
+  const parseDurationToSeconds = (duration: string): number => {
+    const parts = duration.split(':');
+    if (parts.length === 2) {
+      return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+    }
+    return 0;
+  };
+
+  // 播放进度跟踪：每秒更新播放时长
+  useEffect(() => {
+    if (selectedItem && selectedItem.status === 'playing' && selectedItem.playbackProgress?.hasStarted) {
+      const interval = setInterval(() => {
+        setFlowItems(prev => prev.map(item => {
+          if (item.id === selectedItem.id && item.playbackProgress) {
+            const newTotalSeconds = (item.playbackProgress.totalPlayedSeconds || 0) + 1;
+            const durationSeconds = parseDurationToSeconds(item.duration);
+            const progressPercentage = durationSeconds > 0 
+              ? Math.min(100, (newTotalSeconds / durationSeconds) * 100)
+              : 0;
+            
+            return {
+              ...item,
+              playbackProgress: {
+                ...item.playbackProgress,
+                totalPlayedSeconds: newTotalSeconds,
+                progressPercentage,
+                lastPlayedAt: Date.now()
+              }
+            };
+          }
+          return item;
+        }));
+      }, 1000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [selectedItem, selectedItem?.status, selectedItem?.playbackProgress?.hasStarted]);
+
+  // 播放计数和触发检测：当达到5条时触发复盘
+  useEffect(() => {
+    const playedCount = flowItems.filter(item => item.playbackProgress?.hasStarted === true).length;
+    
+    if (playedCount >= 5 && !hasTriggeredReview) {
+      // 触发复盘流程
+      triggerDailyReview();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flowItems, hasTriggeredReview]);
 
   const handlePlayAudio = async (item: FlowItem) => {
     if (!item.script) return;
+    
+    // 实时练习类 items 不应该调用 TTS API
+    if (item.contentType === 'interactive') {
+      console.warn('Interactive items should use live session, not TTS');
+      return;
+    }
     setIsPlayingAudio(true);
     setAudioError(null);
+    setAudioUrl(null);
+    setAudioParts([]);
+    setCurrentPartIndex(0);
+    setCurrentTime(0);
+    setDuration(0);
     
-    const cleanText = item.script.map(s => `${s.speaker}: ${s.text}`).join('\n');
+    // 标记 item 为已开始播放
+    setFlowItems(prev => prev.map(flowItem => {
+      if (flowItem.id === item.id) {
+        return {
+          ...flowItem,
+          status: 'playing' as const,
+          playbackProgress: {
+            ...flowItem.playbackProgress,
+            hasStarted: true,
+            startedAt: flowItem.playbackProgress?.startedAt || Date.now(),
+            lastPlayedAt: Date.now()
+          }
+        };
+      }
+      return flowItem;
+    }));
 
     try {
+        // 判断使用哪种模式
+        const isQuickSummary = item.contentType === 'output';
+        const isDeepAnalysis = item.contentType === 'discussion';
+        
+        const requestBody: any = {
+          preset: isQuickSummary ? 'quick_summary' : isDeepAnalysis ? 'deep_analysis' : undefined,
+          contentType: item.contentType
+        };
+        
+        if (isQuickSummary) {
+          const cleanText = item.script.map(s => `${s.speaker}: ${s.text}`).join('\n');
+          requestBody.text = cleanText;
+        } else if (isDeepAnalysis) {
+          requestBody.script = item.script;
+        } else {
+          const cleanText = item.script.map(s => `${s.speaker}: ${s.text}`).join('\n');
+          requestBody.text = cleanText;
+        }
+
         const response = await fetch(getApiUrl('/api/tts'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: cleanText })
+            body: JSON.stringify(requestBody)
         });
         const data = await response.json();
-        if (data.urls) {
-            // Convert to proxy URLs
-            const proxyUrls = data.urls.map((u: any) => ({
-                ...u,
-                url: `${getApiUrl('/api/proxy-audio')}?url=${encodeURIComponent(u.url)}`
-            }));
-            setAudioUrls(proxyUrls);
-            setCurrentAudioIndex(0);
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'TTS request failed');
+        }
+        
+        if (data.url) {
+            let proxyUrl = data.url;
+            if (!data.url.startsWith('data:')) {
+                proxyUrl = `${getApiUrl('/api/proxy-audio')}?url=${encodeURIComponent(data.url)}`;
+            }
+            setAudioUrl(proxyUrl);
+            setAudioParts([proxyUrl]);
+            setCurrentPartIndex(0);
             
-            // Calculate and update actual audio duration
-            const calculateDuration = () => {
-              const audioPromises = proxyUrls.map((urlObj: {url: string, shortText: string}) => {
-                return new Promise<number>((resolve) => {
-                  const audio = new Audio(urlObj.url);
-                  const handleLoadedMetadata = () => {
-                    resolve(audio.duration || 0);
-                    audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-                    audio.removeEventListener('error', handleError);
-                  };
-                  const handleError = () => {
-                    resolve(0);
-                    audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-                    audio.removeEventListener('error', handleError);
-                  };
-                  
-                  audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-                  audio.addEventListener('error', handleError);
-                  
-                  // Timeout fallback
-                  setTimeout(() => {
-                    resolve(0);
-                    audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-                    audio.removeEventListener('error', handleError);
-                  }, 5000);
-                });
-              });
+            // 如果API返回了duration，更新FlowItem
+            if (data.duration && item) {
+              const minutes = Math.floor(data.duration / 60);
+              const seconds = Math.floor(data.duration % 60);
+              const formattedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
               
-              Promise.all(audioPromises).then(durations => {
-                const totalDuration = durations.reduce((sum, d) => sum + d, 0);
-                if (totalDuration > 0) {
-                  const minutes = Math.floor(totalDuration / 60);
-                  const seconds = Math.floor(totalDuration % 60);
-                  const formattedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-                  
-                  // Update FlowItem duration
-                  setFlowItems(prev => prev.map(flowItem => {
-                    if (flowItem.id === item.id && flowItem.duration !== formattedDuration) {
-                      return { ...flowItem, duration: formattedDuration };
-                    }
-                    return flowItem;
-                  }));
+              setFlowItems(prev => prev.map(flowItem => {
+                if (flowItem.id === item.id && flowItem.duration !== formattedDuration) {
+                  return { ...flowItem, duration: formattedDuration };
                 }
+                return flowItem;
+              }));
+            }
+        } else if (data.urls && Array.isArray(data.urls)) {
+            const parts: string[] = (data.urls as Array<string | { url?: string }>)
+              .map((u) => (typeof u === 'string' ? u : u.url || ''))
+              .filter((u) => u.length > 0)
+              .map((u) => {
+                if (u.startsWith('data:')) return u;
+                return `${getApiUrl('/api/proxy-audio')}?url=${encodeURIComponent(u)}`;
               });
-            };
-            
-            // Delay to ensure URLs are ready
-            setTimeout(calculateDuration, 300);
+
+            if (parts.length === 0) {
+              throw new Error('No valid audio URLs returned');
+            }
+
+            setAudioParts(parts);
+            setCurrentPartIndex(0);
+            setAudioUrl(parts[0]);
+        } else {
+            throw new Error('Invalid API response format');
         }
     } catch (error) {
         console.error("TTS Error", error);
@@ -746,9 +1117,52 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
             text: `${line.speaker}: ${line.text}`
         })) : [];
 
+        // 获取内容类型和场景标签（从后端返回或推断）
+        const contentCategory = data.contentCategory;
+        const backendSceneTag = data.sceneTag as SceneTag | undefined;
+        const summary = data.summary || '';
+        const originalTitle = data.title || 'AI 深度分析';
+        
+        // 先根据标题和摘要推断场景标签（用于决定是否需要添加前缀）
+        const inferredSceneTag = getSceneTagFromTitle(originalTitle, contentCategory, backendSceneTag, summary);
+        
+        // 根据内容类型或推断的场景标签添加文件名前缀
+        let finalTitle = originalTitle;
+        if (contentCategory && prefixMap[contentCategory]) {
+          // 如果已经有前缀，不再添加
+          if (!finalTitle.startsWith('回家路上：') && 
+              !finalTitle.startsWith('静坐专注：') && 
+              !finalTitle.startsWith('问答式记忆：') && 
+              !finalTitle.startsWith('在家充电：')) {
+            finalTitle = prefixMap[contentCategory] + finalTitle;
+          }
+        } else if (inferredSceneTag === 'qa_memory' && !finalTitle.startsWith('问答式记忆：')) {
+          // 如果推断为问答式记忆，但标题中没有前缀，检查是否需要添加
+          const textToCheck = `${originalTitle} ${summary}`.toLowerCase();
+          const qaMemoryKeywords = ['语文', '古诗', '诗文', '诗词', '文言文', 'english', '英语'];
+          if (qaMemoryKeywords.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
+            finalTitle = '问答式记忆：' + finalTitle;
+          }
+        } else if (inferredSceneTag === 'commute' && !finalTitle.startsWith('回家路上：')) {
+          const textToCheck = `${originalTitle} ${summary}`.toLowerCase();
+          const historyKeywords = ['历史', 'history', '古代', '朝代'];
+          if (historyKeywords.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
+            finalTitle = '回家路上：' + finalTitle;
+          }
+        } else if (inferredSceneTag === 'focus' && !finalTitle.startsWith('静坐专注：')) {
+          const textToCheck = `${originalTitle} ${summary}`.toLowerCase();
+          const mathKeywords = ['数学', '几何', 'math', 'geometry'];
+          if (mathKeywords.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
+            finalTitle = '静坐专注：' + finalTitle;
+          }
+        }
+        
+        // 获取最终场景标签（使用更新后的标题）
+        const sceneTag = getSceneTagFromTitle(finalTitle, contentCategory, backendSceneTag, summary);
+
         const aiFlowItem: FlowItem = {
             id: Math.random().toString(36).slice(2, 11),
-            title: data.title || 'AI 深度分析',
+            title: finalTitle,
             duration: '10:00', // Estimate
             type: 'insight',
             tldr: data.summary || '基于上传素材的深度解析',
@@ -760,10 +1174,62 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
             contentType: generationPreferences?.preset === 'interactive_practice' ? 'interactive' : 
                          generationPreferences?.preset === 'quick_summary' ? 'output' : 'discussion',
             script: data.podcastScript,
-            knowledgeCards: newCards
+            knowledgeCards: newCards,
+            sceneTag: sceneTag,
+            playbackProgress: {
+                hasStarted: false
+            }
         };
 
-        setFlowItems(prev => [aiFlowItem, ...prev]);
+        // 检查是否为首次生成 (当列表为空时，视为从 0 到 1 的生成)
+        let newFlowItems: FlowItem[] = [aiFlowItem];
+        
+        // 使用 functional update 确保基于最新状态判断
+        setFlowItems(prev => {
+          const isFirstGeneration = prev.length === 0;
+          if (isFirstGeneration) {
+            console.log('首次生成，添加默认 items');
+            const defaultItems = getDefaultFlowItems();
+            return [...defaultItems, ...newFlowItems, ...prev];
+          }
+          return [...newFlowItems, ...prev];
+        });
+
+        // 尝试启动预生成 items 的动画更新
+        // 这里无法直接知道是否添加了 items，但运行更新逻辑是安全的（找不到 item 会忽略）
+        setTimeout(() => {
+          const updateDefaultItems = async () => {
+            const defaultItemIds = ['default-1', 'default-2', 'default-3'];
+            
+            for (let i = 0; i < defaultItemIds.length; i++) {
+              const delay = i === 0 ? 500 : 800 + Math.random() * 400;
+              await new Promise(resolve => setTimeout(resolve, delay));
+              
+              setFlowItems(prev => {
+                const itemExists = prev.some(item => item.id === defaultItemIds[i]);
+                if (!itemExists) {
+                  // 如果 item 不存在，说明可能不是首次生成，或者被删除了，直接跳过
+                  return prev;
+                }
+                
+                const updated = prev.map(item => 
+                  item.id === defaultItemIds[i] 
+                    ? { 
+                        ...item, 
+                        isGenerating: false,
+                        generationProgress: undefined
+                      }
+                    : item
+                );
+                return updated;
+              });
+            }
+          };
+          updateDefaultItems().catch(err => {
+            console.error('更新预生成 items 状态失败:', err);
+          });
+        }, 300);
+
         setReadyToFlow(true);
         setShowInputPanel(false);
         setGenerationProgress('');
@@ -810,31 +1276,6 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
     }
   };
 
-  const toggleSelection = (id: string, e: MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    setPlaylistSelection(prev => {
-        const next = new Set(prev);
-        if (next.has(id)) {
-            next.delete(id);
-        } else {
-            next.add(id);
-        }
-        return next;
-    });
-  };
-
-  const clearPlaylistSelection = () => {
-    setPlaylistSelection(new Set());
-    setIsPlaylistExpanded(false);
-  };
-
-  const removeFromPlaylist = (id: string) => {
-    setPlaylistSelection(prev => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  };
 
   const handleDeleteFile = (fileId: string, fileName: string | undefined) => {
     setDeleteConfirmDialog({ show: true, fileId, fileName: fileName || null });
@@ -851,9 +1292,6 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
     setDeleteConfirmDialog({ show: false, fileId: null, fileName: null });
   };
 
-  const selectedPlaylistItems = Array.from(playlistSelection)
-    .map(id => flowItems.find(item => item.id === id))
-    .filter((item): item is FlowItem => Boolean(item));
 
   const renderInputPanel = () => {
     if (isGenerating) {
@@ -1226,266 +1664,196 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         )}
 
         {flowItems.length > 0 && (
-        <div className="bg-white rounded-3xl p-5 shadow-sm min-h-[200px] animate-in slide-in-from-bottom-4 duration-500">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Flow List</h3>
-            {flowItems.length > 0 && (
-              <div className="flex bg-slate-100 rounded-lg p-0.5">
-                <button
-                  onClick={() => setFlowViewMode('scenes')}
+        <div className="bg-white rounded-3xl p-0 shadow-sm min-h-[200px] animate-in slide-in-from-bottom-4 duration-500 overflow-hidden">
+          <div className="flex flex-col gap-4 p-5 pb-2">
+            <h3 className="text-xl font-bold text-slate-900 tracking-tight">FlowList</h3>
+            
+            {/* 筛选器 */}
+            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar -mx-1 px-1">
+              <button
+                  onClick={() => setFilterPreset('all')}
                   className={clsx(
-                    "p-1.5 rounded-md transition-all",
-                    flowViewMode === 'scenes' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400"
+                      "px-4 py-1.5 rounded-full text-xs font-semibold transition-all border whitespace-nowrap",
+                      filterPreset === 'all'
+                          ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-200"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300"
                   )}
-                >
-                  <Calendar size={14} />
-                </button>
-                <button
-                  onClick={() => setFlowViewMode('list')}
-                  className={clsx(
-                    "p-1.5 rounded-md transition-all",
-                    flowViewMode === 'list' ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400"
-                  )}
-                >
-                  <List size={14} />
-                </button>
-              </div>
-            )}
+              >
+                  全部
+              </button>
+              {Object.entries(PRESETS).map(([key, preset]) => (
+                  <button
+                      key={key}
+                      onClick={() => setFilterPreset(key)}
+                      className={clsx(
+                          "px-4 py-1.5 rounded-full text-xs font-semibold transition-all border whitespace-nowrap",
+                          filterPreset === key
+                              ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-200"
+                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300"
+                      )}
+                  >
+                      {preset.label}
+                  </button>
+              ))}
+            </div>
           </div>
 
-          <div className="space-y-3">
-              {flowViewMode === 'scenes' ? (
-                <div className="space-y-4">
-                  {[
-                    { id: 'deep_work', label: '深度学习', icon: Brain, color: 'bg-black text-white', desc: '高强度专注' },
-                    { id: 'casual', label: '休闲听书', icon: Coffee, color: 'bg-green-600 text-white', desc: '轻松氛围' }
-                  ].map(scene => {
-                    const sceneItems = flowItems.filter(item => item.scenes.includes(scene.id));
-                    if (sceneItems.length === 0) return null;
+          {/* FlowItem 列表 */}
+          <div className="pb-4">
+              <div className="flex flex-col">
+                {flowItems
+                .sort((a, b) => {
+                    const scenePriority: Record<string, number> = {
+                        'daily_review': -1,  // 今日复盘排在最前面
+                        'default': 0,        // 默认场景标签排在首位
+                        'commute': 1,
+                        'home_charge': 2,
+                        'focus': 3,
+                        'qa_memory': 4,
+                        'sleep_meditation': 5
+                    };
+                    const pA = scenePriority[a.sceneTag || 'default'] ?? 7;
+                    const pB = scenePriority[b.sceneTag || 'default'] ?? 7;
+                    return pA - pB;
+                })
+                .filter(item => {
+                  // 生成中的 items 始终显示
+                  if (item.isGenerating) return true;
+                  
+                  if (filterPreset === 'all') return true;
+                  
+                  const preset = PRESETS[filterPreset];
+                  if (!preset) return true;
 
-                    const isActive = currentContext === scene.id;
+                  // Check Mode
+                  if (item.mode !== preset.mode) return false;
+                  // Check Type
+                  if (item.contentType !== preset.type) return false;
+                  
+                  // Check Duration
+                  const mins = parseInt(item.duration.split(':')[0]);
+                  if (preset.duration === 'short' && mins >= 5) return false;
+                  if (preset.duration === 'medium' && (mins < 5 || mins > 15)) return false;
+                  if (preset.duration === 'long' && mins <= 15) return false;
 
-                    return (
-                      <div
-                        key={scene.id}
-                        className={clsx(
-                          "bg-slate-50 rounded-2xl p-4 border transition-all duration-300",
-                          isActive ? "border-indigo-500 shadow-md ring-1 ring-indigo-500 bg-white" : "border-slate-100 hover:border-slate-300"
-                        )}
-                        onClick={() => onContextChange(scene.id as 'deep_work' | 'casual')}
-                      >
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <div className={clsx("w-8 h-8 rounded-full flex items-center justify-center transition-colors", isActive ? "bg-indigo-600 text-white" : scene.color)}>
-                              <scene.icon size={16} />
-                            </div>
-                            <div>
-                              <h4 className={clsx("text-sm font-bold", isActive ? "text-indigo-900" : "text-slate-800")}>{scene.label}</h4>
-                              <p className="text-[10px] text-slate-400">{scene.desc}</p>
-                            </div>
-                          </div>
-                          {isActive && <CheckCircle size={18} className="text-indigo-600" />}
-                        </div>
-                        <div className="space-y-2">
-                          {sceneItems.map(item => (
-                            <button
-                              key={item.id}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedItem(item);
-                              }}
-                              className="w-full flex items-center gap-3 p-2 rounded-xl bg-white border border-slate-100 hover:border-indigo-100 transition-all text-left"
-                            >
-                              <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-                                <Play size={12} fill="currentColor" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <h5 className="text-xs font-semibold text-slate-700 truncate">{item.title}</h5>
-                                <p className="text-[10px] text-slate-400 truncate">{item.tldr}</p>
-                              </div>
-                              <span className="text-[10px] font-mono text-slate-400">{item.duration}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                    <button
-                        onClick={() => setFilterPreset('all')}
-                        className={clsx(
-                            "px-3 py-1.5 rounded-lg text-[10px] font-medium transition-all border whitespace-nowrap",
-                            filterPreset === 'all'
-                                ? "bg-indigo-50 border-indigo-200 text-indigo-700"
-                                : "bg-slate-50 border-slate-100 text-slate-500 hover:bg-slate-100"
-                        )}
+                  return true;
+                }).map((item) => {
+                  const sceneTag = item.sceneTag || 'default';
+                  const sceneConfig = SCENE_CONFIGS[sceneTag];
+                  const SceneIcon = sceneConfig.icon;
+                  const isSelected = selectedItem?.id === item.id;
+                  
+                  return (
+                    <div
+                      key={item.id}
+                      className="relative"
                     >
-                        全部
-                    </button>
-                    {Object.entries(PRESETS).map(([key, preset]) => (
-                        <button
-                            key={key}
-                            onClick={() => setFilterPreset(key)}
-                            className={clsx(
-                                "px-3 py-1.5 rounded-lg text-[10px] font-medium transition-all border whitespace-nowrap",
-                                filterPreset === key
-                                    ? "bg-indigo-50 border-indigo-200 text-indigo-700"
-                                    : "bg-slate-50 border-slate-100 text-slate-500 hover:bg-slate-100"
-                            )}
-                        >
-                            {preset.label}
-                        </button>
-                    ))}
-                  </div>
-
-                  <div className="space-y-2">
-                    {flowItems.filter(item => {
-                      if (filterPreset === 'all') return true;
-                      
-                      const preset = PRESETS[filterPreset];
-                      if (!preset) return true;
-
-                      // Check Mode
-                      if (item.mode !== preset.mode) return false;
-                      // Check Type
-                      if (item.contentType !== preset.type) return false;
-                      
-                      // Check Duration
-                      const mins = parseInt(item.duration.split(':')[0]);
-                      if (preset.duration === 'short' && mins >= 5) return false;
-                      if (preset.duration === 'medium' && (mins < 5 || mins > 15)) return false;
-                      if (preset.duration === 'long' && mins <= 15) return false;
-
-                      return true;
-                    }).map(item => (
+                      {/* FlowItem - Compact Modern List Style */}
                       <div
-                        key={item.id}
                         onClick={() => setSelectedItem(item)}
                         role="button"
                         tabIndex={0}
                         className={clsx(
-                          "w-full flex items-center justify-between p-3 rounded-xl border transition-all active:scale-[0.98]",
-                          playlistSelection.has(item.id)
-                            ? "bg-indigo-50 border-indigo-200 hover:border-indigo-300"
-                            : "bg-slate-50 border-slate-100 hover:bg-slate-100 hover:border-indigo-100"
+                          "w-full flex items-center justify-between py-2 px-4 group transition-all active:scale-[0.99] border-b border-slate-50 last:border-0 cursor-pointer",
+                          isSelected
+                            ? "bg-indigo-50/40"
+                            : "hover:bg-slate-50/60"
                         )}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
-                            {item.mode === 'dual' ? <Users size={16} /> : <Play size={16} fill="currentColor" />}
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {/* 1. Compact Cover/Icon with Shadow */}
+                          <div className={clsx(
+                              "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 shadow-sm transition-all duration-300",
+                              isSelected 
+                                ? "bg-indigo-100 text-indigo-600 shadow-indigo-100" 
+                                : "bg-slate-50 text-slate-400 group-hover:bg-white group-hover:shadow-md group-hover:text-indigo-500 group-hover:scale-105"
+                          )}>
+                            <SceneIcon size={18} strokeWidth={1.5} />
                           </div>
-                          <div className="flex flex-col items-start">
-                            <span className="text-sm font-semibold text-slate-700 text-left line-clamp-1">{item.title}</span>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[10px] bg-slate-200 px-1.5 py-0.5 rounded text-slate-500">{item.duration}</span>
-                              <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                                {item.contentType === 'discussion' ? <MessageCircle size={10} /> : <Radio size={10} />}
-                                {item.contentType === 'discussion' ? '探讨' : '输出'}
-                              </span>
+                          
+                          {/* 2. Content Hierarchy */}
+                          <div className="flex flex-col items-start min-w-0 flex-1">
+                             {/* Top Tag */}
+                            <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-[9px] font-bold text-indigo-500 tracking-wider uppercase bg-indigo-50 px-1.5 py-0.5 rounded-md scale-90 origin-left">
+                                    {sceneConfig.label}
+                                </span>
                             </div>
+
+                            {/* Main Title */}
+                            <span className={clsx(
+                                "text-[13px] font-bold leading-snug line-clamp-1 mb-0 transition-colors",
+                                item.isGenerating 
+                                  ? "text-slate-400" 
+                                  : isSelected 
+                                    ? "text-indigo-900" 
+                                    : "text-slate-800 group-hover:text-slate-900"
+                            )}>
+                                {item.title}
+                            </span>
+                            
+                            {/* 生成中状态或 Subtitle / TLDR */}
+                            {item.isGenerating ? (
+                              <div className="flex items-center gap-1.5 text-[9px] text-indigo-500 font-medium mt-0.5">
+                                <Loader2 size={10} className="animate-spin" />
+                                <span>{item.generationProgress || '正在生成中...'}</span>
+                              </div>
+                            ) : (
+                              <span className="text-[9px] text-slate-400 font-medium line-clamp-1 group-hover:text-slate-500 transition-colors">
+                                  {item.tldr || "点击查看详情..."}
+                              </span>
+                            )}
                           </div>
                         </div>
+
+                        {/* 3. Play Button (Replaces Selection) */}
                         <button
-                          onClick={(e) => toggleSelection(item.id, e)}
+                          onClick={(e) => {
+                              e.stopPropagation();
+                              if (!item.isGenerating) {
+                                setSelectedItem(item);
+                                handlePlayAudio(item);
+                              }
+                          }}
+                          disabled={item.isGenerating}
                           className={clsx(
-                            "w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0",
-                            playlistSelection.has(item.id)
-                              ? "bg-indigo-600 text-white shadow-sm"
-                              : "bg-white text-slate-400 border border-slate-200 hover:border-slate-300"
+                            "pl-3 py-2",
+                            item.isGenerating && "cursor-not-allowed opacity-50"
                           )}
-                          aria-label={playlistSelection.has(item.id) ? "取消选择" : "选择加入播放列表"}
                         >
-                          {playlistSelection.has(item.id) ? (
-                            <CheckCircle size={18} className="text-white" />
-                          ) : (
-                            <Circle size={18} />
-                          )}
+                            <div className={clsx(
+                                "w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200",
+                                item.isGenerating
+                                  ? "bg-slate-100 text-slate-300"
+                                  : isSelected
+                                    ? "bg-indigo-600 text-white shadow-indigo-200 group-hover:scale-110 group-hover:shadow-md"
+                                    : "bg-slate-100 text-slate-400 group-hover:bg-indigo-500 group-hover:text-white group-hover:scale-110 group-hover:shadow-md"
+                            )}>
+                                {item.isGenerating ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <Play size={12} fill="currentColor" className="ml-0.5" />
+                                )}
+                            </div>
                         </button>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
         </div>
         )}
       </div>
 
-      {flowViewMode === 'list' && selectedPlaylistItems.length > 0 && (
-        <div className="absolute left-0 right-0 bottom-0 z-40 px-3 pb-3">
-          <div className="mx-auto w-full max-w-[420px] bg-white border border-slate-200 rounded-xl shadow-md overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center shrink-0">
-                  <Music size={14} />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-[10px] text-slate-400 truncate">
-                    {selectedPlaylistItems.length === 1
-                      ? selectedPlaylistItems[0]?.title
-                      : `${selectedPlaylistItems[0]?.title} +${selectedPlaylistItems.length - 1}`}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={clearPlaylistSelection}
-                  className="text-[10px] font-medium text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                  清空
-                </button>
-                <button
-                  onClick={() => setIsPlaylistExpanded(v => !v)}
-                  className="w-8 h-8 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center hover:bg-slate-200 transition-colors"
-                  aria-label={isPlaylistExpanded ? "收起播放列表" : "展开播放列表"}
-                >
-                  <ChevronUp
-                    size={14}
-                    className={clsx("transition-transform", isPlaylistExpanded ? "rotate-180" : "rotate-0")}
-                  />
-                </button>
-                <button
-                  onClick={onStartFlow}
-                  className="h-8 px-3 rounded-full bg-black text-white text-xs font-semibold flex items-center gap-1.5 hover:bg-slate-800 transition-colors"
-                >
-                  <Play size={14} fill="currentColor" /> go flow
-                </button>
-              </div>
-            </div>
+      {/* Legacy Playlist Selection UI Removed - Single Item Flow Mode */}
+      {/* 
+      {selectedPlaylistItems.length > 0 && (
+          // ... Removed ...
+      )} 
+      */}
 
-            {isPlaylistExpanded && (
-              <div className="border-t border-slate-100 max-h-44 overflow-y-auto">
-                {selectedPlaylistItems.map(item => (
-                  <div
-                    key={item.id}
-                    className="px-3 py-2 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors"
-                  >
-                    <button
-                      onClick={() => setSelectedItem(item)}
-                      className="flex-1 min-w-0 text-left"
-                    >
-                      <div className="text-sm font-semibold text-slate-800 truncate">{item.title}</div>
-                      <div className="text-[10px] text-slate-400 font-mono">{item.duration}</div>
-                    </button>
-                    <button
-                      onClick={() => removeFromPlaylist(item.id)}
-                      className="w-7 h-7 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center hover:bg-slate-200 transition-colors shrink-0"
-                      aria-label="从播放列表移除"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {flowItems.length > 0 && !(flowViewMode === 'list' && selectedPlaylistItems.length > 0) && (
+      {flowItems.length > 0 && (
         <div className="absolute left-0 right-0 bottom-0 px-4 pb-4 pt-2">
           <button
             onClick={onStartFlow}
@@ -1495,7 +1863,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
               readyToFlow ? "bg-black text-white hover:bg-slate-800" : "bg-slate-200 text-slate-400 cursor-not-allowed"
             )}
           >
-            <Play fill="currentColor" size={18} />
+            <Sparkles size={20} />
             Go Flow
           </button>
         </div>
@@ -1524,7 +1892,6 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                       {/* Title Section */}
                       <div className="pb-6 px-4">
                           <h2 className="font-bold text-lg leading-tight mb-2">{selectedItem.title}</h2>
-                          <p className="text-sm text-slate-400">时长 {selectedItem.duration}</p>
                       </div>
                       
                       {/* Bottom Section: Player Controls */}
@@ -1591,38 +1958,91 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                                     Start Live Practice
                                 </button>
                               ) : (
-                                  audioUrls.length > 0 ? (
+                                  audioUrl ? (
                               <div className="w-full flex flex-col">
-                                  {/* Custom Audio Player */}
                                   <audio
                                       ref={audioRef}
                                       className="hidden"
-                                      src={audioUrls[currentAudioIndex]?.url}
+                                      src={audioUrl}
+                                      onLoadedMetadata={() => {
+                                        if (audioRef.current) {
+                                          setDuration(audioRef.current.duration || 0);
+                                        }
+                                      }}
+                                      onTimeUpdate={() => {
+                                        if (audioRef.current) {
+                                          setCurrentTime(audioRef.current.currentTime || 0);
+                                        }
+                                      }}
                                       onError={handleAudioError}
                                       onPlay={() => setIsAudioPlaying(true)}
-                                      onPause={() => setIsAudioPlaying(false)}
+                                      onPause={() => {
+                                        setIsAudioPlaying(false);
+                                        if (selectedItem) {
+                                          setFlowItems(prev => prev.map(item => {
+                                            if (item.id === selectedItem.id && item.status === 'playing') {
+                                              return {
+                                                ...item,
+                                                status: 'ready' as const
+                                              };
+                                            }
+                                            return item;
+                                          }));
+                                        }
+                                      }}
                                       onEnded={() => {
-                                        if (currentAudioIndex < audioUrls.length - 1) {
-                                            setCurrentAudioIndex(prev => prev + 1);
-                                        } else {
-                                            setIsPlayingAudio(false);
-                                            setIsAudioPlaying(false);
+                                        setIsPlayingAudio(false);
+                                        setIsAudioPlaying(false);
+                                        if (audioParts.length > 0 && currentPartIndex < audioParts.length - 1) {
+                                          const nextIndex = currentPartIndex + 1;
+                                          const nextUrl = audioParts[nextIndex];
+                                          setCurrentPartIndex(nextIndex);
+                                          setAudioUrl(nextUrl);
+                                          setCurrentTime(0);
+                                          setDuration(0);
+                                          return;
+                                        }
+                                        if (selectedItem) {
+                                          setFlowItems(prev => prev.map(item => {
+                                            if (item.id === selectedItem.id) {
+                                              return {
+                                                ...item,
+                                                status: 'completed' as const
+                                              };
+                                            }
+                                            return item;
+                                          }));
                                         }
                                     }}
                                   />
                                   
+                                  {/* Progress Bar */}
+                                  <div className="w-full mb-4">
+                                    <input
+                                      type="range"
+                                      min="0"
+                                      max={duration || 0}
+                                      value={currentTime}
+                                      onChange={handleSeek}
+                                      className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                                      style={{
+                                        background: `linear-gradient(to right, rgb(99, 102, 241) 0%, rgb(99, 102, 241) ${duration ? (currentTime / duration) * 100 : 0}%, rgba(255, 255, 255, 0.1) ${duration ? (currentTime / duration) * 100 : 0}%, rgba(255, 255, 255, 0.1) 100%)`
+                                      }}
+                                    />
+                                    <div className="flex justify-between text-xs text-slate-400 mt-1">
+                                      <span>{formatTime(currentTime)}</span>
+                                      <span>{formatTime(duration)}</span>
+                                    </div>
+                                    {audioParts.length > 1 && selectedItem && (
+                                      <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+                                        <span>第 {currentPartIndex + 1} 段 · 本段 {formatTime(duration)}</span>
+                                        <span>总时长 {selectedItem.duration}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  
                                   {/* Playback Controls Row */}
                                   <div className="flex items-center gap-3 w-full">
-                                      {/* Previous Button */}
-                                      <button 
-                                          onClick={() => setCurrentAudioIndex(prev => Math.max(0, prev - 1))}
-                                          disabled={currentAudioIndex === 0}
-                                          className="w-8 h-8 flex items-center justify-center text-white/60 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
-                                      >
-                                          <ChevronLeft size={18} />
-                                      </button>
-                                      
-                                      {/* Play/Pause Button */}
                                       <button 
                                           onClick={() => {
                                               if (audioRef.current) {
@@ -1645,23 +2065,6 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                                           )}
                                       </button>
                                       
-                                      {/* Next Button */}
-                                      <button 
-                                          onClick={() => setCurrentAudioIndex(prev => Math.min(audioUrls.length - 1, prev + 1))}
-                                          disabled={currentAudioIndex === audioUrls.length - 1}
-                                          className="w-8 h-8 flex items-center justify-center text-white/60 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
-                                      >
-                                          <ChevronRight size={18} />
-                                      </button>
-                                      
-                                      {/* Part Info */}
-                                      <div className="flex-1 text-center">
-                                          <p className="text-xs text-slate-400 font-mono">
-                                              {currentAudioIndex + 1} / {audioUrls.length}
-                                          </p>
-                                      </div>
-                                      
-                                      {/* Playback Rate */}
                                       <button 
                                           onClick={() => {
                                               const rates = [1, 1.25, 1.5, 2];
@@ -1672,23 +2075,68 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                                       >
                                           {playbackRate}×
                                       </button>
+                                      {audioParts.length > 1 && (
+                                        <div className="flex items-center gap-2 ml-2">
+                                          <button
+                                            onClick={() => {
+                                              if (currentPartIndex > 0 && audioParts[currentPartIndex - 1]) {
+                                                const newIndex = currentPartIndex - 1;
+                                                const newUrl = audioParts[newIndex];
+                                                setCurrentPartIndex(newIndex);
+                                                setAudioUrl(newUrl);
+                                                setCurrentTime(0);
+                                                setDuration(0);
+                                              }
+                                            }}
+                                            disabled={currentPartIndex === 0}
+                                            className="px-2 py-1 text-xs rounded-full border border-white/20 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                                          >
+                                            上一段
+                                          </button>
+                                          <span className="text-xs text-slate-400">
+                                            {currentPartIndex + 1} / {audioParts.length}
+                                          </span>
+                                          <button
+                                            onClick={() => {
+                                              if (currentPartIndex < audioParts.length - 1 && audioParts[currentPartIndex + 1]) {
+                                                const newIndex = currentPartIndex + 1;
+                                                const newUrl = audioParts[newIndex];
+                                                setCurrentPartIndex(newIndex);
+                                                setAudioUrl(newUrl);
+                                                setCurrentTime(0);
+                                                setDuration(0);
+                                              }
+                                            }}
+                                            disabled={currentPartIndex === audioParts.length - 1}
+                                            className="px-2 py-1 text-xs rounded-full border border-white/20 text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                                          >
+                                            下一段
+                                          </button>
+                                        </div>
+                                      )}
                                   </div>
                                   
-                                  {/* Current Segment Text - Scrolling Lyrics Style */}
-                                  <div className="mt-4 w-full relative">
-                                      <div className="relative bg-white/5 rounded-lg p-3 max-h-24 overflow-y-auto scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
-                                          {/* Top gradient fade */}
-                                          <div className="absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-slate-900/80 to-transparent pointer-events-none z-10 rounded-t-lg" />
-                                          
-                                          {/* Text content */}
-                                          <p className="text-xs text-slate-300 leading-snug relative z-0">
-                                              {audioUrls[currentAudioIndex]?.shortText}
-                                          </p>
-                                          
-                                          {/* Bottom gradient fade */}
-                                          <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-slate-900/80 to-transparent pointer-events-none z-10 rounded-b-lg" />
-                                      </div>
-                                  </div>
+                                  {/* Script Text - Scrolling Style */}
+                                  {selectedItem.script && (
+                                    <div className="mt-4 w-full relative">
+                                        <div className="relative bg-white/5 rounded-lg p-3 max-h-32 overflow-y-auto scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+                                            {/* Top gradient fade */}
+                                            <div className="absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-slate-900/80 to-transparent pointer-events-none z-10 rounded-t-lg" />
+                                            
+                                            {/* Text content */}
+                                            <div className="text-xs text-slate-300 leading-snug relative z-0 space-y-2">
+                                                {selectedItem.script.map((line, index) => (
+                                                  <div key={index}>
+                                                    <span className="font-semibold text-indigo-400">{line.speaker}:</span> {line.text}
+                                                  </div>
+                                                ))}
+                                            </div>
+                                            
+                                            {/* Bottom gradient fade */}
+                                            <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-slate-900/80 to-transparent pointer-events-none z-10 rounded-b-lg" />
+                                        </div>
+                                    </div>
+                                  )}
                               </div>
                           ) : (
                               <button 

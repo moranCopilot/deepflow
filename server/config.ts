@@ -62,7 +62,8 @@ export const config = {
      */
     get isConfigured() {
         return !!this.geminiApiKey;
-    }
+    },
+
 };
 
 // Validation check on startup

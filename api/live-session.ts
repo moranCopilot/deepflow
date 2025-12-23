@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getGeminiApiKey } from './config-helper.js';
 import { WebSocket } from 'ws';
 
 const GEMINI_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent';
@@ -26,10 +27,6 @@ setInterval(() => {
     }
   }
 }, 60000); // Cleanup every minute
-
-function getGeminiApiKey(): string {
-  return process.env.GEMINI_API_KEY || process.env.VUE_APP_GEMINI_API_KEY || '';
-}
 
 function createGeminiConnection(sessionId: string, script: string, knowledgeCards: any[], modelName: string = "models/gemini-2.5-flash-native-audio-preview-12-2025"): WebSocket {
   const apiKey = getGeminiApiKey();

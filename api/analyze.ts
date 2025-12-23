@@ -3,6 +3,7 @@ import { IncomingForm, File as FormidableFile } from 'formidable';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
 import { promptManager } from './prompts/index.js';
+import { getGeminiApiKey } from './config-helper.js';
 import fs from 'fs';
 import mammoth from 'mammoth';
 import { createRequire } from 'module';
@@ -105,7 +106,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY || process.env.VUE_APP_GEMINI_API_KEY;
+  const apiKey = getGeminiApiKey();
   if (!apiKey) {
     return res.status(500).json({ error: "Server API Key not configured" });
   }
