@@ -7,8 +7,7 @@ export function PhoneFrame({ children }: { children: React.ReactNode }) {
         "relative bg-gray-900 rounded-[50px] p-4 shadow-2xl border-[8px] border-gray-800 ring-1 ring-white/20 select-none transition-all duration-500",
         "w-[350px] h-[700px]"
     )}>
-      {/* Dynamic Island */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[100px] h-[28px] bg-black rounded-full z-50 flex justify-center items-center transition-all duration-300 hover:w-[120px] hover:h-[32px] cursor-default">
+      <div className="absolute top-[18px] left-1/2 -translate-x-1/2 w-[100px] h-[28px] bg-black rounded-full z-50 flex justify-center items-center transition-all duration-300 hover:w-[120px] hover:h-[32px] cursor-default">
         <div className="flex items-center gap-2 opacity-0 hover:opacity-100 transition-opacity duration-300">
         <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
         <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />

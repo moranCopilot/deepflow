@@ -1380,7 +1380,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                     {isGenerating ? (
                         <><Loader2 className="w-4 h-4 animate-spin" /> {generationProgress || '生成中...'}</>
                     ) : (
-                        <><Sparkles size={16} /> AI 整理</>
+                        <><Sparkles size={16} /> AI 消化</>
                     )}
                 </button>
                 {isGenerating && (
