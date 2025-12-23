@@ -1,5 +1,5 @@
 import { useState, useRef, type MouseEvent, type Dispatch, type SetStateAction, useEffect } from 'react';
-import { Camera, FileText, Mic, Package, Play, Loader2, Sparkles, Brain, Coffee, Library, Tag, List, Calendar, X, AlignLeft, Users, Radio, MessageCircle, Plus, ChevronUp, Music, CheckCircle, Circle, ChevronLeft, ChevronRight, AlertCircle, Mic2, Square, Copy, Check } from 'lucide-react';
+import { Camera, FileText, Mic, Package, Play, Pause, Loader2, Sparkles, Brain, Coffee, Library, Tag, List, Calendar, X, AlignLeft, Users, Radio, MessageCircle, Plus, ChevronUp, Music, CheckCircle, Circle, ChevronLeft, ChevronRight, AlertCircle, Mic2, Square, Copy, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { useLiveSession } from '../hooks/useLiveSession';
 import { PackingAnimation } from './PackingAnimation';
@@ -103,6 +103,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
   const [playbackRate, setPlaybackRate] = useState(1);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [copiedScript, setCopiedScript] = useState(false);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   // Live Session State
   const [isLiveMode, setIsLiveMode] = useState(false);
@@ -126,13 +127,33 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
 
   useEffect(() => {
       if (isLiveMode && !liveSession.isConnected) {
-          try {
-              liveSession.connect();
-          } catch (error: any) {
-              console.error("Failed to start live session:", error);
-              alert(`无法启动实时会话：${error?.message || '未知错误'}\n\n注意：Vercel Serverless Functions 不支持 WebSocket，此功能需要单独部署 WebSocket 服务器。`);
+          // Validate selectedItem and script before connecting
+          if (!selectedItem) {
+              alert('请先选择一个学习内容才能启动实时练习。');
               setIsLiveMode(false);
+              return;
           }
+
+          if (!selectedItem.script || selectedItem.script.length === 0) {
+              alert('所选内容没有可用的脚本，无法启动实时练习。请选择包含对话脚本的学习材料。');
+              setIsLiveMode(false);
+              return;
+          }
+
+          const scriptText = selectedItem.script.map(s => `${s.speaker}: ${s.text}`).join('\n');
+          if (!scriptText || scriptText.trim().length === 0) {
+              alert('脚本内容为空，无法启动实时练习。请选择包含有效脚本内容的学习材料。');
+              setIsLiveMode(false);
+              return;
+          }
+
+          // Connect to live session
+          liveSession.connect().catch((error: any) => {
+              console.error("Failed to start live session:", error);
+              const errorMessage = error?.message || '未知错误';
+              alert(`无法启动实时会话：${errorMessage}\n\n注意：Vercel Serverless Functions 不支持 WebSocket，此功能需要单独部署 WebSocket 服务器。`);
+              setIsLiveMode(false);
+          });
       }
       return () => {
           if (isLiveMode && liveSession.isConnected) {
@@ -144,7 +165,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
           }
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLiveMode]);
+  }, [isLiveMode, selectedItem]);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -375,16 +396,163 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
     }
   };
 
+  // 压缩音频文件
+  const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4MB (小于 Vercel 的 4.5MB 限制)
+
+  const compressAudioFile = async (file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const fileReader = new FileReader();
+
+      fileReader.onload = async (e) => {
+        try {
+          const arrayBuffer = e.target?.result as ArrayBuffer;
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+          // 降低采样率到 22050 Hz (CD 质量的一半)
+          const targetSampleRate = 22050;
+          const numberOfChannels = audioBuffer.numberOfChannels;
+          const length = Math.round(audioBuffer.length * targetSampleRate / audioBuffer.sampleRate);
+          const offlineContext = new OfflineAudioContext(numberOfChannels, length, targetSampleRate);
+          
+          const source = offlineContext.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(offlineContext.destination);
+          source.start();
+
+          const compressedBuffer = await offlineContext.startRendering();
+
+          // 转换为 WAV
+          const wav = audioBufferToWav(compressedBuffer);
+          const compressedBlob = new Blob([wav], { type: 'audio/wav' });
+          
+          // 如果压缩后仍然太大，进一步降低质量
+          if (compressedBlob.size > MAX_FILE_SIZE) {
+            // 使用更低的采样率
+            const lowerSampleRate = 16000;
+            const lowerLength = Math.round(audioBuffer.length * lowerSampleRate / audioBuffer.sampleRate);
+            const lowerContext = new OfflineAudioContext(numberOfChannels, lowerLength, lowerSampleRate);
+            
+            const lowerSource = lowerContext.createBufferSource();
+            lowerSource.buffer = audioBuffer;
+            lowerSource.connect(lowerContext.destination);
+            lowerSource.start();
+
+            const lowerBuffer = await lowerContext.startRendering();
+            const lowerWav = audioBufferToWav(lowerBuffer);
+            const lowerBlob = new Blob([lowerWav], { type: 'audio/wav' });
+            
+            const compressedFile = new File([lowerBlob], file.name.replace(/\.[^/.]+$/, '.wav'), { type: 'audio/wav' });
+            resolve(compressedFile);
+          } else {
+            const compressedFile = new File([compressedBlob], file.name.replace(/\.[^/.]+$/, '.wav'), { type: 'audio/wav' });
+            resolve(compressedFile);
+          }
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      fileReader.onerror = reject;
+      fileReader.readAsArrayBuffer(file);
+    });
+  };
+
+  // 将 AudioBuffer 转换为 WAV
+  const audioBufferToWav = (buffer: AudioBuffer): ArrayBuffer => {
+    const length = buffer.length;
+    const numberOfChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const arrayBuffer = new ArrayBuffer(44 + length * numberOfChannels * 2);
+    const view = new DataView(arrayBuffer);
+    const channels: Float32Array[] = [];
+
+    for (let i = 0; i < numberOfChannels; i++) {
+      channels.push(buffer.getChannelData(i));
+    }
+
+    // WAV header
+    const writeString = (offset: number, string: string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + length * numberOfChannels * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numberOfChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * numberOfChannels * 2, true);
+    view.setUint16(32, numberOfChannels * 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, length * numberOfChannels * 2, true);
+
+    // 写入音频数据
+    let offset = 44;
+    for (let i = 0; i < length; i++) {
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        const sample = Math.max(-1, Math.min(1, channels[channel][i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        offset += 2;
+      }
+    }
+
+    return arrayBuffer;
+  };
+
+  // 压缩文件（如果需要）
+  const compressFileIfNeeded = async (file: File): Promise<File> => {
+    // 如果文件已经小于限制，直接返回
+    if (file.size <= MAX_FILE_SIZE) {
+      return file;
+    }
+
+    // 只压缩音频文件
+    if (file.type.startsWith('audio/')) {
+      setGenerationProgress(`正在压缩音频文件: ${file.name}...`);
+      try {
+        const compressed = await compressAudioFile(file);
+        console.log(`压缩完成: ${file.size} -> ${compressed.size} bytes`);
+        return compressed;
+      } catch (error) {
+        console.error('音频压缩失败:', error);
+        throw new Error(`文件 ${file.name} 太大（${(file.size / 1024 / 1024).toFixed(2)}MB），且压缩失败。请先压缩文件后再上传。`);
+      }
+    }
+
+    // 其他文件类型，提示用户压缩
+    throw new Error(`文件 ${file.name} 太大（${(file.size / 1024 / 1024).toFixed(2)}MB），超过 4MB 限制。请先压缩文件后再上传。`);
+  };
+
   const generateFlowList = async (retryCount = 0) => {
     if (rawInputs.length === 0) return;
     
     const maxRetries = 2;
     setIsGenerating(true);
-    setGenerationProgress(retryCount > 0 ? `重试中 (${retryCount}/${maxRetries})...` : '正在上传文件...');
+    setGenerationProgress(retryCount > 0 ? `重试中 (${retryCount}/${maxRetries})...` : '正在处理文件...');
 
     try {
+        // 压缩文件（如果需要）
+        setGenerationProgress('正在检查和压缩文件...');
+        const processedFiles: File[] = [];
+        
+        for (const file of selectedFiles) {
+          try {
+            const processedFile = await compressFileIfNeeded(file);
+            processedFiles.push(processedFile);
+          } catch (error: any) {
+            throw error; // 直接抛出错误，让用户知道需要压缩
+          }
+        }
+
+        setGenerationProgress('正在上传文件...');
         const formData = new FormData();
-        selectedFiles.forEach(file => {
+        processedFiles.forEach(file => {
             formData.append('files', file);
         });
         
@@ -1192,36 +1360,33 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
       {/* Detail View Modal / Overlay */}
       {selectedItem && (
           <div className="absolute inset-0 z-50 bg-white flex flex-col animate-in slide-in-from-bottom duration-300">
-              {/* Header */}
-              <div className="flex items-center justify-between p-6 border-b border-slate-100">
-                  <div className="flex flex-col">
-                      <h2 className="text-lg font-bold text-slate-900">{selectedItem.title}</h2>
-                      <span className="text-xs text-slate-400">AI Audio Gen • {selectedItem.duration}</span>
-                  </div>
-                  <button onClick={() => setSelectedItem(null)} className="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-500 hover:bg-slate-100">
-                      <X size={20} />
-                  </button>
-              </div>
-
-              {/* Scrollable Content */}
-              <div className="flex-1 p-6 overflow-y-auto">
-                  {/* Audio Player Section */}
-                  <div className="w-full mb-8">
-                      <div className="w-full bg-slate-900 rounded-3xl p-6 flex flex-col items-center justify-center relative overflow-hidden shadow-xl text-white">
-                      <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/50 to-slate-900 z-0" />
+              {/* Integrated Header with Player */}
+              <div className="relative bg-slate-900 overflow-hidden">
+                  {/* Gradient Background */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/50 to-slate-900 z-0" />
+                  
+                  {/* Content */}
+                  <div className="relative z-10 text-white">
+                      {/* Close Button Row - Separate Line */}
+                      <div className="flex justify-end px-2 pt-2">
+                          <button 
+                              onClick={() => setSelectedItem(null)} 
+                              className="w-8 h-8 flex items-center justify-center text-white/60 hover:text-white transition-colors"
+                          >
+                              <X size={18} />
+                          </button>
+                      </div>
                       
-                      <div className="relative z-10 flex flex-col items-center gap-4 w-full">
-                          <div className="w-16 h-16 rounded-full bg-indigo-500/20 flex items-center justify-center animate-pulse">
-                              <Music size={32} className="text-indigo-400" />
-                          </div>
-                          
-                          <div className="text-center">
-                              <h3 className="font-bold text-lg">{selectedItem.title}</h3>
-                              <p className="text-sm text-slate-400">DeepFlow Audio • {selectedItem.duration}</p>
-                          </div>
-
+                      {/* Title Section */}
+                      <div className="pb-6 px-4">
+                          <h2 className="font-bold text-lg leading-tight mb-2">{selectedItem.title}</h2>
+                          <p className="text-sm text-slate-400">时长 {selectedItem.duration}</p>
+                      </div>
+                      
+                      {/* Bottom Section: Player Controls */}
+                      <div className="flex flex-col gap-4 w-full px-4 pb-6">
                           {isLiveMode ? (
-                              <div className="w-full flex flex-col items-center gap-4 py-4 mt-4 bg-black/20 rounded-2xl border border-white/10">
+                              <div className="w-full flex flex-col items-center gap-4 py-4 bg-black/20 rounded-2xl border border-white/10">
                                   {!liveSession.isConnected ? (
                                       <div className="flex flex-col items-center justify-center py-8">
                                           <Loader2 size={24} className="animate-spin text-indigo-400 mb-2" />
@@ -1268,7 +1433,14 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                           ) : (
                               selectedItem.contentType === 'interactive' ? (
                                 <button 
-                                    onClick={() => setIsLiveMode(true)}
+                                    onClick={() => {
+                                        // Validate before starting
+                                        if (!selectedItem.script || selectedItem.script.length === 0) {
+                                            alert('此内容没有可用的脚本，无法启动实时练习。');
+                                            return;
+                                        }
+                                        setIsLiveMode(true);
+                                    }}
                                     className="mt-4 px-8 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-full font-bold flex items-center gap-2 hover:scale-105 transition-transform shadow-lg shadow-indigo-500/30"
                                 >
                                     <Mic2 size={18} />
@@ -1276,59 +1448,102 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                                 </button>
                               ) : (
                                   audioUrls.length > 0 ? (
-                              <div className="w-full mt-4 flex flex-col items-center">
-                                  <div className="w-full flex justify-end mb-2 px-1">
+                              <div className="w-full flex flex-col">
+                                  {/* Custom Audio Player */}
+                                  <audio
+                                      ref={audioRef}
+                                      className="hidden"
+                                      src={audioUrls[currentAudioIndex]?.url}
+                                      onError={handleAudioError}
+                                      onPlay={() => setIsAudioPlaying(true)}
+                                      onPause={() => setIsAudioPlaying(false)}
+                                      onEnded={() => {
+                                        if (currentAudioIndex < audioUrls.length - 1) {
+                                            setCurrentAudioIndex(prev => prev + 1);
+                                        } else {
+                                            setIsPlayingAudio(false);
+                                            setIsAudioPlaying(false);
+                                        }
+                                    }}
+                                  />
+                                  
+                                  {/* Playback Controls Row */}
+                                  <div className="flex items-center gap-3 w-full">
+                                      {/* Previous Button */}
+                                      <button 
+                                          onClick={() => setCurrentAudioIndex(prev => Math.max(0, prev - 1))}
+                                          disabled={currentAudioIndex === 0}
+                                          className="w-8 h-8 flex items-center justify-center text-white/60 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                      >
+                                          <ChevronLeft size={18} />
+                                      </button>
+                                      
+                                      {/* Play/Pause Button */}
+                                      <button 
+                                          onClick={() => {
+                                              if (audioRef.current) {
+                                                  if (audioRef.current.paused) {
+                                                      audioRef.current.play().catch(err => {
+                                                          console.error('Play failed:', err);
+                                                          setAudioError('播放失败，请重试');
+                                                      });
+                                                  } else {
+                                                      audioRef.current.pause();
+                                                  }
+                                              }
+                                          }}
+                                          className="w-10 h-10 rounded-full bg-white/90 hover:bg-white flex items-center justify-center text-slate-900 transition-all hover:scale-105"
+                                      >
+                                          {isAudioPlaying ? (
+                                              <Pause size={16} fill="currentColor" />
+                                          ) : (
+                                              <Play size={16} fill="currentColor" />
+                                          )}
+                                      </button>
+                                      
+                                      {/* Next Button */}
+                                      <button 
+                                          onClick={() => setCurrentAudioIndex(prev => Math.min(audioUrls.length - 1, prev + 1))}
+                                          disabled={currentAudioIndex === audioUrls.length - 1}
+                                          className="w-8 h-8 flex items-center justify-center text-white/60 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                                      >
+                                          <ChevronRight size={18} />
+                                      </button>
+                                      
+                                      {/* Part Info */}
+                                      <div className="flex-1 text-center">
+                                          <p className="text-xs text-slate-400 font-mono">
+                                              {currentAudioIndex + 1} / {audioUrls.length}
+                                          </p>
+                                      </div>
+                                      
+                                      {/* Playback Rate */}
                                       <button 
                                           onClick={() => {
                                               const rates = [1, 1.25, 1.5, 2];
                                               const nextIndex = (rates.indexOf(playbackRate) + 1) % rates.length;
                                               setPlaybackRate(rates[nextIndex]);
                                           }}
-                                          className="text-[10px] font-bold text-slate-400 bg-white/10 px-2 py-1 rounded hover:bg-white/20 transition-colors"
+                                          className="text-xs font-mono text-slate-400 hover:text-white transition-colors px-2 py-1"
                                       >
-                                          {playbackRate}x
+                                          {playbackRate}×
                                       </button>
                                   </div>
-                                  <audio
-                                      ref={audioRef}
-                                      controls
-                                      className="w-full mb-3"
-                                      src={audioUrls[currentAudioIndex]?.url}
-                                      onError={handleAudioError}
-                                      onEnded={() => {
-                                        if (currentAudioIndex < audioUrls.length - 1) {
-                                            setCurrentAudioIndex(prev => prev + 1);
-                                        } else {
-                                            setIsPlayingAudio(false);
-                                        }
-                                    }}
-                                  />
                                   
-                                  <div className="flex items-center justify-between w-full px-4 mt-2">
-                                      <button 
-                                          onClick={() => setCurrentAudioIndex(prev => Math.max(0, prev - 1))}
-                                          disabled={currentAudioIndex === 0}
-                                          className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
-                                      >
-                                          <ChevronLeft size={20} />
-                                      </button>
-                                      
-                                      <div className="flex flex-col items-center flex-1 min-w-0 px-2">
-                                        <p className="text-center text-xs text-slate-400 font-mono mb-1">
-                                            Part {currentAudioIndex + 1} / {audioUrls.length}
-                                        </p>
-                                        <p className="text-[10px] text-slate-500 w-full text-center truncate">
-                                            {audioUrls[currentAudioIndex]?.shortText}
-                                        </p>
+                                  {/* Current Segment Text - Scrolling Lyrics Style */}
+                                  <div className="mt-4 w-full relative">
+                                      <div className="relative bg-white/5 rounded-lg p-3 max-h-24 overflow-y-auto scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+                                          {/* Top gradient fade */}
+                                          <div className="absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-slate-900/80 to-transparent pointer-events-none z-10 rounded-t-lg" />
+                                          
+                                          {/* Text content */}
+                                          <p className="text-xs text-slate-300 leading-snug relative z-0">
+                                              {audioUrls[currentAudioIndex]?.shortText}
+                                          </p>
+                                          
+                                          {/* Bottom gradient fade */}
+                                          <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-slate-900/80 to-transparent pointer-events-none z-10 rounded-b-lg" />
                                       </div>
-
-                                      <button 
-                                          onClick={() => setCurrentAudioIndex(prev => Math.min(audioUrls.length - 1, prev + 1))}
-                                          disabled={currentAudioIndex === audioUrls.length - 1}
-                                          className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors shrink-0"
-                                      >
-                                          <ChevronRight size={20} />
-                                      </button>
                                   </div>
                               </div>
                           ) : (
@@ -1351,9 +1566,11 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                               </div>
                           )}
                       </div>
-                      </div>
                   </div>
+              </div>
 
+              {/* Scrollable Content */}
+              <div className="flex-1 p-6 overflow-y-auto">
                   <div className="space-y-8">
                       {/* TLDR Section */}
                   <div className="space-y-3">

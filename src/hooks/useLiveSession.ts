@@ -17,6 +17,7 @@ export function useLiveSession(
     const processorRef = useRef<ScriptProcessorNode | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const audioQueueRef = useRef<Array<{ data: string; timestamp: number }>>([]);
+    const hasErrorRef = useRef<boolean>(false);
     
     const nextStartTimeRef = useRef<number>(0);
 
@@ -50,6 +51,20 @@ export function useLiveSession(
 
     const connect = useCallback(async () => {
         try {
+            // Validate script before proceeding
+            if (!script || script.trim().length === 0) {
+                throw new Error('脚本内容不能为空。请确保已选择包含脚本内容的学习材料。');
+            }
+
+            // Reset error flag
+            hasErrorRef.current = false;
+
+            // Close existing EventSource connection if any
+            if (eventSourceRef.current) {
+                eventSourceRef.current.close();
+                eventSourceRef.current = null;
+            }
+
             // Generate unique session ID
             const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             sessionIdRef.current = sessionId;
@@ -66,9 +81,26 @@ export function useLiveSession(
                 })
             });
 
-            if (!initResponse.ok) {
-                const errorData = await initResponse.json();
-                throw new Error(errorData.error || 'Failed to initialize session');
+            // Verify response is JSON
+            const contentType = initResponse.headers.get('content-type');
+            if (!contentType || !contentType.includes('application/json')) {
+                throw new Error('实时练习服务返回了无效响应。请检查服务是否正常运行。');
+            }
+
+            // Read and verify the response JSON (only read once)
+            try {
+                const initData = await initResponse.json();
+                if (!initResponse.ok) {
+                    throw new Error(initData.error || 'Failed to initialize session');
+                }
+                if (!initData.success) {
+                    throw new Error(initData.error || '会话初始化失败');
+                }
+            } catch (parseError: any) {
+                if (parseError instanceof Error && parseError.message !== '会话初始化失败' && !parseError.message.includes('Failed to initialize')) {
+                    throw new Error('无法解析服务器响应。请检查服务是否正常运行。');
+                }
+                throw parseError;
             }
 
             // Create EventSource for SSE
@@ -85,6 +117,7 @@ export function useLiveSession(
                     
                     if (data.type === 'connected') {
                         console.log('Live session connected');
+                        hasErrorRef.current = false; // Reset error flag on successful connection
                         setIsConnected(true);
                         onConnect?.();
                         
@@ -98,8 +131,12 @@ export function useLiveSession(
                     } else if (data.type === 'audio') {
                         playAudioChunk(data.data);
                     } else if (data.type === 'error') {
-                        console.error('SSE Error:', data.message);
-                        onError?.(new Error(data.message));
+                        if (!hasErrorRef.current) {
+                            hasErrorRef.current = true;
+                            console.error('SSE Error:', data.message);
+                            setIsConnected(false);
+                            onError?.(new Error(data.message));
+                        }
                     } else if (data.type === 'ping') {
                         // Keep-alive ping, ignore
                     }
@@ -109,10 +146,22 @@ export function useLiveSession(
             };
 
             eventSource.onerror = (error) => {
-                console.error('SSE Error', error);
-                const errorMessage = '实时会话连接失败，请检查网络连接或稍后重试。';
-                onError?.(new Error(errorMessage));
-                setIsConnected(false);
+                // Prevent duplicate error callbacks
+                if (hasErrorRef.current) {
+                    return;
+                }
+
+                // Only trigger error if EventSource is closed (readyState === 2)
+                // EventSource.readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED
+                if (eventSource.readyState === 2) {
+                    hasErrorRef.current = true;
+                    console.error('SSE Error', error);
+                    const errorMessage = '实时会话连接失败，请检查网络连接或稍后重试。';
+                    setIsConnected(false);
+                    onError?.(new Error(errorMessage));
+                    // Close the EventSource
+                    eventSource.close();
+                }
             };
         } catch (error: any) {
             console.error("Failed to connect:", error);

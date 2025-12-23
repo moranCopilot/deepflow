@@ -91,15 +91,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const sessionId = req.query.sessionId as string || req.body?.sessionId;
+  try {
+    const sessionId = req.query.sessionId as string || req.body?.sessionId;
 
-  if (!sessionId) {
-    res.status(400).json({ error: 'sessionId is required' });
-    return;
-  }
+    if (!sessionId) {
+      res.status(400).json({ error: 'sessionId is required' });
+      return;
+    }
+    
+    // Check if API key is configured
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) {
+      res.status(500).json({ error: '实时练习服务未配置 API Key，请联系管理员。' });
+      return;
+    }
 
-  // GET: SSE stream for receiving audio
-  if (req.method === 'GET') {
+    // GET: SSE stream for receiving audio
+    if (req.method === 'GET') {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -291,4 +299,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   res.status(405).json({ error: 'Method not allowed' });
+  } catch (error: any) {
+    console.error('Live session error:', error);
+    res.status(500).json({ 
+      error: `实时练习服务出错：${error.message || '未知错误'}` 
+    });
+  }
 }

@@ -10,8 +10,7 @@ import { promptManager } from './prompts/index.js';
 import { config } from './config.js';
 
 import { createServer } from 'http';
-import { WebSocketServer } from 'ws';
-import { setupLiveSession } from './live-session.js';
+import liveSessionRouter from './live-session.js';
 import mammoth from 'mammoth';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
@@ -49,14 +48,13 @@ const port = config.port;
 
 // Create HTTP server
 const server = createServer(app);
-// Create WebSocket server
-const wss = new WebSocketServer({ server });
-
-setupLiveSession(wss);
 
 // Configure CORS
 app.use(cors());
 app.use(express.json());
+
+// Mount Live Session API
+app.use('/api/live-session', liveSessionRouter);
 
 // Configure Multer for file uploads
 const upload = multer({ dest: 'uploads/' });
