@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { floatTo16BitPCM, arrayBufferToBase64, base64ToArrayBuffer } from '../utils/audio-utils';
-import { WS_URL } from '../utils/api-config';
+import { getApiUrl } from '../utils/api-config';
 
 export function useLiveSession(
     script: string, 
@@ -11,10 +11,12 @@ export function useLiveSession(
 ) {
     const [isConnected, setIsConnected] = useState(false);
     const [isSpeaking, setIsSpeaking] = useState(false);
-    const wsRef = useRef<WebSocket | null>(null);
+    const eventSourceRef = useRef<EventSource | null>(null);
+    const sessionIdRef = useRef<string | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const processorRef = useRef<ScriptProcessorNode | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
+    const audioQueueRef = useRef<Array<{ data: string; timestamp: number }>>([]);
     
     const nextStartTimeRef = useRef<number>(0);
 
@@ -46,69 +48,100 @@ export function useLiveSession(
         nextStartTimeRef.current += buffer.duration;
     };
 
-    const connect = useCallback(() => {
-        const ws = new WebSocket(WS_URL);
-        wsRef.current = ws;
+    const connect = useCallback(async () => {
+        try {
+            // Generate unique session ID
+            const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            sessionIdRef.current = sessionId;
 
-        ws.onopen = () => {
-            console.log('WS Connected');
-            setIsConnected(true);
-            
-            // Send Setup Message
-            const setupMsg = {
-                setup: {
-                    model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
-                    generation_config: {
-                        response_modalities: ["AUDIO"]
-                    },
-                    system_instruction: {
-                        parts: [
-                            { text: "You are an AI tutor helping the user practice. Here is the context:" },
-                            { text: script },
-                            { text: "Here are key knowledge points:" },
-                            { text: JSON.stringify(knowledgeCards) },
-                            { text: "Conduct a natural conversation to help the user master these points. Be encouraging but correct mistakes. Do not be too verbose." }
-                        ]
+            // Initialize session
+            const initResponse = await fetch(getApiUrl('/api/live-session'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId,
+                    action: 'init',
+                    script,
+                    knowledgeCards
+                })
+            });
+
+            if (!initResponse.ok) {
+                const errorData = await initResponse.json();
+                throw new Error(errorData.error || 'Failed to initialize session');
+            }
+
+            // Create EventSource for SSE
+            const eventSource = new EventSource(`${getApiUrl('/api/live-session')}?sessionId=${sessionId}`);
+            eventSourceRef.current = eventSource;
+
+            eventSource.onopen = () => {
+                console.log('SSE Connected');
+            };
+
+            eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'connected') {
+                        console.log('Live session connected');
+                        setIsConnected(true);
+                        onConnect?.();
+                        
+                        // Send queued audio chunks
+                        while (audioQueueRef.current.length > 0) {
+                            const chunk = audioQueueRef.current.shift();
+                            if (chunk) {
+                                sendAudioChunk(chunk.data);
+                            }
+                        }
+                    } else if (data.type === 'audio') {
+                        playAudioChunk(data.data);
+                    } else if (data.type === 'error') {
+                        console.error('SSE Error:', data.message);
+                        onError?.(new Error(data.message));
+                    } else if (data.type === 'ping') {
+                        // Keep-alive ping, ignore
                     }
+                } catch (e) {
+                    console.error('Failed to parse SSE message:', e);
                 }
             };
-            ws.send(JSON.stringify(setupMsg));
-            onConnect?.();
-        };
 
-        ws.onerror = (error) => {
-            console.error("WebSocket Error", error);
-        };
-
-        ws.onmessage = async (event) => {
-            let data;
-            try {
-                if (event.data instanceof Blob) {
-                    data = JSON.parse(await event.data.text());
-                } else {
-                    data = JSON.parse(event.data as string);
-                }
-            } catch (e) {
-                console.error("Failed to parse msg", e);
-                return;
-            }
-
-            // Handle Server Content (Audio)
-            if (data.serverContent?.modelTurn?.parts) {
-                for (const part of data.serverContent.modelTurn.parts) {
-                    if (part.inlineData && part.inlineData.mimeType.startsWith('audio/pcm')) {
-                        playAudioChunk(part.inlineData.data);
-                    }
-                }
-            }
-        };
-
-        ws.onclose = (event) => {
-            console.log("WS Closed", event.code, event.reason);
-            setIsConnected(false);
-            onDisconnect?.();
-        };
+            eventSource.onerror = (error) => {
+                console.error('SSE Error', error);
+                const errorMessage = '实时会话连接失败，请检查网络连接或稍后重试。';
+                onError?.(new Error(errorMessage));
+                setIsConnected(false);
+            };
+        } catch (error: any) {
+            console.error("Failed to connect:", error);
+            const errorMessage = `无法创建实时会话连接：${error.message}`;
+            onError?.(new Error(errorMessage));
+        }
     }, [script, knowledgeCards, onConnect, onDisconnect, onError]);
+
+    const sendAudioChunk = async (base64Data: string) => {
+        if (!sessionIdRef.current) return;
+
+        try {
+            const response = await fetch(getApiUrl('/api/live-session'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId: sessionIdRef.current,
+                    action: 'send',
+                    audioData: base64Data
+                })
+            });
+
+            if (!response.ok) {
+                console.error('Failed to send audio chunk');
+            }
+        } catch (error) {
+            console.error('Error sending audio chunk:', error);
+        }
+    };
 
     const startRecording = async () => {
         if (!audioContextRef.current) {
@@ -136,15 +169,14 @@ export function useLiveSession(
                 const pcmData = floatTo16BitPCM(inputData);
                 const base64 = arrayBufferToBase64(pcmData.buffer as ArrayBuffer);
 
-                if (wsRef.current?.readyState === WebSocket.OPEN) {
-                    wsRef.current.send(JSON.stringify({
-                        realtime_input: {
-                            media_chunks: [{
-                                mime_type: "audio/pcm",
-                                data: base64
-                            }]
-                        }
-                    }));
+                if (isConnected) {
+                    sendAudioChunk(base64);
+                } else {
+                    // Queue audio chunks if not connected yet
+                    audioQueueRef.current.push({
+                        data: base64,
+                        timestamp: Date.now()
+                    });
                 }
             };
 
@@ -168,19 +200,42 @@ export function useLiveSession(
         setIsSpeaking(false);
     };
 
-    const disconnect = () => {
+    const disconnect = useCallback(async () => {
         stopRecording();
-        if (wsRef.current) {
-            wsRef.current.onclose = null; // Prevent callback from firing on manual disconnect
-            wsRef.current.close();
-            wsRef.current = null;
+        
+        // Close EventSource
+        if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
         }
+
+        // Disconnect session on server
+        if (sessionIdRef.current) {
+            try {
+                await fetch(getApiUrl('/api/live-session'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sessionId: sessionIdRef.current,
+                        action: 'disconnect'
+                    })
+                });
+            } catch (error) {
+                console.error('Error disconnecting session:', error);
+            }
+            sessionIdRef.current = null;
+        }
+
+        // Clear audio queue
+        audioQueueRef.current = [];
+
         // Don't close AudioContext immediately as it might cut off playback, 
         // but for "End Session" it's fine.
         audioContextRef.current?.close();
         audioContextRef.current = null;
         setIsConnected(false);
-    };
+        onDisconnect?.();
+    }, [onDisconnect]);
 
     return {
         connect,

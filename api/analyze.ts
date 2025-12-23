@@ -16,6 +16,7 @@ const WordExtractor = require('word-extractor');
 async function waitForFileActive(fileManager: GoogleAIFileManager, name: string, timeoutMs: number = 30000) {
   const startTime = Date.now();
   let file = await fileManager.getFile(name);
+  let checkCount = 0;
   
   while (file.state === "PROCESSING") {
     // Check timeout
@@ -23,8 +24,11 @@ async function waitForFileActive(fileManager: GoogleAIFileManager, name: string,
       throw new Error(`File ${file.name} processing timeout after ${timeoutMs}ms`);
     }
     
-    // Wait before checking again
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Progressive backoff: start with 1s, increase to 3s max
+    const waitTime = Math.min(1000 + checkCount * 500, 3000);
+    checkCount++;
+    
+    await new Promise((resolve) => setTimeout(resolve, waitTime));
     file = await fileManager.getFile(name);
   }
   
@@ -33,6 +37,65 @@ async function waitForFileActive(fileManager: GoogleAIFileManager, name: string,
   }
   
   return file;
+}
+
+// Helper to generate content with timeout and retries
+async function generateContentWithRetry(
+  model: any, 
+  prompt: string, 
+  fileParts: any[], 
+  maxRetries: number = 3,
+  requestStartTime: number
+): Promise<any> {
+  let lastError: any = null;
+  const generationStartTime = Date.now();
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.log(`Retrying content generation (attempt ${attempt + 1}/${maxRetries + 1})...`);
+        // Exponential backoff: 1s, 2s, 4s
+        const backoffTime = Math.min(1000 * Math.pow(2, attempt - 1), 4000);
+        await new Promise(resolve => setTimeout(resolve, backoffTime));
+      }
+      
+      // Check if we're running out of time (leave 5s buffer)
+      const elapsedTotal = Date.now() - requestStartTime;
+      if (elapsedTotal > 55000) {
+        throw new Error(`TIMEOUT: 请求已运行 ${Math.round(elapsedTotal/1000)}秒，接近超时限制`);
+      }
+      
+      const result = await model.generateContent([prompt, ...fileParts]);
+      const elapsed = Date.now() - generationStartTime;
+      console.log(`Generation successful on attempt ${attempt + 1} (took ${Math.round(elapsed/1000)}s)`);
+      return result;
+    } catch (error: any) {
+      lastError = error;
+      const elapsed = Date.now() - generationStartTime;
+      console.warn(`Generation attempt ${attempt + 1} failed after ${Math.round(elapsed/1000)}s:`, error.message);
+      
+      // Check if error is non-retryable
+      const errorMessage = error.message || '';
+      if (
+        errorMessage.includes('TIMEOUT') ||
+        errorMessage.includes('504') || 
+        errorMessage.includes('Gateway Timeout') ||
+        errorMessage.includes('API Key') ||
+        errorMessage.includes('INVALID_ARGUMENT') ||
+        errorMessage.includes('PERMISSION_DENIED')
+      ) {
+        // Non-retryable error, throw immediately
+        throw error;
+      }
+      
+      // If this was the last attempt, throw the error
+      if (attempt === maxRetries) {
+        throw new Error(`内容生成失败（已重试 ${maxRetries} 次，总耗时 ${Math.round(elapsed/1000)}秒）。\n\n错误：${error.message}`);
+      }
+    }
+  }
+  
+  throw lastError || new Error('内容生成失败：未知错误');
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -149,25 +212,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Wait for processing (with timeout to leave time for content generation)
+    // Wait for processing (with dynamic timeout based on file size)
     // Files are uploaded, now wait for Gemini to process them
     console.log("Waiting for files to be processed...");
-    const processingTimeout = 25000; // 25 seconds max for processing (leave 35s for generation)
     
-    for (const response of uploadResponses) {
+    // Dynamic timeout: base 15s + 2s per MB, max 30s
+    const totalSizeBytes = fileArray.reduce((acc: number, f: FormidableFile) => acc + (f.size || 0), 0);
+    const totalSizeMB = totalSizeBytes / (1024 * 1024);
+    const processingTimeout = Math.min(15000 + Math.ceil(totalSizeMB) * 2000, 30000);
+    console.log(`Processing timeout: ${processingTimeout}ms for ${totalSizeMB.toFixed(2)}MB`);
+    
+    // Process files in parallel for faster completion
+    const processingPromises = uploadResponses.map(async (response) => {
       try {
         await waitForFileActive(fileManager, response.file.name, processingTimeout);
+        return { success: true, name: response.file.name };
       } catch (timeoutError: any) {
         // Check current state - might be ready despite timeout
-        const currentFile = await fileManager.getFile(response.file.name);
-        if (currentFile.state === "ACTIVE") {
-          console.log(`File ${response.file.name} is ready despite timeout warning`);
-          continue;
+        try {
+          const currentFile = await fileManager.getFile(response.file.name);
+          if (currentFile.state === "ACTIVE") {
+            console.log(`File ${response.file.name} is ready despite timeout warning`);
+            return { success: true, name: response.file.name };
+          }
+          return { success: false, name: response.file.name, state: currentFile.state, error: timeoutError };
+        } catch (e) {
+          return { success: false, name: response.file.name, error: timeoutError };
         }
-        // If still processing or failed, throw error
-        throw new Error(`文件处理超时：${response.file.name} 仍在处理中（状态：${currentFile.state}）。\n\n建议：\n1. 使用较小的文件\n2. 稍后重试\n3. 检查网络连接`);
       }
+    });
+    
+    const processingResults = await Promise.all(processingPromises);
+    const failedFiles = processingResults.filter(r => !r.success);
+    
+    if (failedFiles.length > 0) {
+      const failedNames = failedFiles.map(f => f.name).join(', ');
+      throw new Error(`文件处理超时：${failedNames} 仍在处理中。\n\n建议：\n1. 使用较小的文件（<10MB）\n2. 减少文件数量\n3. 稍后重试`);
     }
+    
     console.log("All files ready.");
 
     // Generate content
@@ -213,45 +295,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Generate content with retry mechanism
     // Files are already uploaded and processed, so we can retry generation without re-uploading
     console.log("Generating content...");
-    const generationStartTime = Date.now();
     
-    let result;
-    let lastError: any = null;
-    const maxRetries = 2; // Retry up to 2 times
+    // Calculate remaining time and adjust retries accordingly
+    const elapsedSoFar = Date.now() - requestStartTime;
+    const remainingTime = 55000 - elapsedSoFar; // Leave 5s buffer
     
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        if (attempt > 0) {
-          console.log(`Retrying content generation (attempt ${attempt + 1}/${maxRetries + 1})...`);
-          // Wait a bit before retry
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        
-        result = await model.generateContent([prompt, ...fileParts]);
-        const elapsed = Date.now() - generationStartTime;
-        console.log(`Generation successful on attempt ${attempt + 1} (took ${Math.round(elapsed/1000)}s)`);
-        break; // Success, exit retry loop
-      } catch (error: any) {
-        lastError = error;
-        const elapsed = Date.now() - generationStartTime;
-        console.warn(`Generation attempt ${attempt + 1} failed after ${Math.round(elapsed/1000)}s:`, error.message);
-        
-        // If this was the last attempt, throw the error
-        if (attempt === maxRetries) {
-          throw new Error(`内容生成失败（已重试 ${maxRetries} 次，总耗时 ${Math.round(elapsed/1000)}秒）。\n\n错误：${error.message}\n\n文件已上传并处理完成，可以稍后重试生成。`);
-        }
-        
-        // Check if error is retryable (not a timeout from Vercel itself)
-        if (error.message && (error.message.includes('504') || error.message.includes('Gateway Timeout'))) {
-          // Vercel timeout - don't retry, throw immediately
-          throw new Error(`请求超时（${Math.round(elapsed/1000)}秒）。文件已上传并处理完成，请稍后重试生成内容。`);
-        }
-      }
+    // Adjust max retries based on remaining time
+    let maxRetries = 3;
+    if (remainingTime < 20000) {
+      maxRetries = 1; // Only 1 retry if less than 20s remaining
+    } else if (remainingTime < 35000) {
+      maxRetries = 2; // 2 retries if less than 35s remaining
     }
     
-    if (!result) {
-      throw lastError || new Error('内容生成失败：未知错误');
-    }
+    console.log(`Remaining time: ${Math.round(remainingTime/1000)}s, max retries: ${maxRetries}`);
+    
+    const result = await generateContentWithRetry(model, prompt, fileParts, maxRetries, requestStartTime);
     
     const responseText = result.response.text();
     console.log("Generation complete.");
@@ -281,8 +340,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let errorMessage = error?.message || String(error) || "Internal Server Error";
     
     // Check for timeout errors
-    if (totalTime > 55000) {
-      errorMessage = `请求超时（耗时 ${Math.round(totalTime/1000)}秒）。\n\nVercel Serverless Functions 最大执行时间为 60 秒。\n\n建议：\n1. 使用较小的文件（<10MB）\n2. 减少文件数量\n3. 稍后重试`;
+    if (totalTime > 55000 || errorMessage.includes('TIMEOUT')) {
+      errorMessage = `请求超时（耗时 ${Math.round(totalTime/1000)}秒）。\n\nVercel Serverless Functions 最大执行时间为 60 秒。\n\n建议：\n1. 使用较小的文件（<10MB）\n2. 减少文件数量\n3. 使用 PDF 或纯文本格式（处理更快）\n4. 稍后重试`;
     } else if (errorMessage.includes('promptManager') || errorMessage.includes('prompt')) {
       errorMessage = `配置错误：无法加载提示模板管理器。请检查 prompts 目录是否存在。\n\n原始错误: ${errorMessage}`;
     } else if (errorMessage.includes('GEMINI_API_KEY') || errorMessage.includes('API Key')) {

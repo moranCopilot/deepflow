@@ -56,6 +56,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
   const [archivedInputs, setArchivedInputs] = useState<RawInput[]>([]);
   const [flowItems, setFlowItems] = useState<FlowItem[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState<string>('');
   const [readyToFlow, setReadyToFlow] = useState(false);
   const [gardenTab, setGardenTab] = useState<'cards' | 'files'>('cards');
   const [flowViewMode, setFlowViewMode] = useState<'scenes' | 'list'>('scenes');
@@ -115,20 +116,34 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
       },
       (error) => {
           console.error("Live Session Error:", error);
-          alert("连接实时服务失败，请检查网络或稍后重试。");
+          const errorMessage = error?.message || "连接实时服务失败";
+          
+          // Show user-friendly error message
+          alert(errorMessage);
           setIsLiveMode(false);
       }
   );
 
   useEffect(() => {
       if (isLiveMode && !liveSession.isConnected) {
-          liveSession.connect();
+          try {
+              liveSession.connect();
+          } catch (error: any) {
+              console.error("Failed to start live session:", error);
+              alert(`无法启动实时会话：${error?.message || '未知错误'}\n\n注意：Vercel Serverless Functions 不支持 WebSocket，此功能需要单独部署 WebSocket 服务器。`);
+              setIsLiveMode(false);
+          }
       }
       return () => {
-          if (isLiveMode) {
-              liveSession.disconnect();
+          if (isLiveMode && liveSession.isConnected) {
+              try {
+                  liveSession.disconnect();
+              } catch (error) {
+                  console.error("Error disconnecting:", error);
+              }
           }
       };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLiveMode]);
 
   useEffect(() => {
@@ -143,6 +158,70 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
           audioRef.current.play().catch(e => console.log("Auto-play prevented/pending interaction", e));
       }
   }, [currentAudioIndex, audioUrls]);
+
+  // Calculate and update actual audio duration when audio URLs are loaded
+  useEffect(() => {
+    if (audioUrls.length > 0 && selectedItem) {
+      let isCancelled = false;
+      
+      // Calculate total duration of all audio segments
+      const audioPromises = audioUrls.map(urlObj => {
+        return new Promise<number>((resolve) => {
+          const audio = new Audio(urlObj.url);
+          const handleLoadedMetadata = () => {
+            if (!isCancelled) {
+              resolve(audio.duration || 0);
+            }
+            audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+            audio.removeEventListener('error', handleError);
+          };
+          const handleError = () => {
+            if (!isCancelled) {
+              resolve(0);
+            }
+            audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+            audio.removeEventListener('error', handleError);
+          };
+          
+          audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+          audio.addEventListener('error', handleError);
+          
+          // Timeout fallback (5 seconds)
+          setTimeout(() => {
+            if (!isCancelled) {
+              resolve(0);
+              audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+              audio.removeEventListener('error', handleError);
+            }
+          }, 5000);
+        });
+      });
+      
+      Promise.all(audioPromises).then(durations => {
+        if (isCancelled) return;
+        
+        const totalDuration = durations.reduce((sum, d) => sum + d, 0);
+        if (totalDuration > 0 && selectedItem) {
+          const minutes = Math.floor(totalDuration / 60);
+          const seconds = Math.floor(totalDuration % 60);
+          const formattedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+          
+          // Only update if duration changed and item still exists
+          setFlowItems(prev => prev.map(item => {
+            if (item.id === selectedItem.id && item.duration !== formattedDuration) {
+              console.log(`Updating duration for ${item.title}: ${item.duration} -> ${formattedDuration}`);
+              return { ...item, duration: formattedDuration };
+            }
+            return item;
+          }));
+        }
+      });
+      
+      return () => {
+        isCancelled = true;
+      };
+    }
+  }, [audioUrls, selectedItem]);
 
   const handlePlayAudio = async (item: FlowItem) => {
     if (!item.script) return;
@@ -166,6 +245,55 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
             }));
             setAudioUrls(proxyUrls);
             setCurrentAudioIndex(0);
+            
+            // Calculate and update actual audio duration
+            const calculateDuration = () => {
+              const audioPromises = proxyUrls.map((urlObj: {url: string, shortText: string}) => {
+                return new Promise<number>((resolve) => {
+                  const audio = new Audio(urlObj.url);
+                  const handleLoadedMetadata = () => {
+                    resolve(audio.duration || 0);
+                    audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                    audio.removeEventListener('error', handleError);
+                  };
+                  const handleError = () => {
+                    resolve(0);
+                    audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                    audio.removeEventListener('error', handleError);
+                  };
+                  
+                  audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+                  audio.addEventListener('error', handleError);
+                  
+                  // Timeout fallback
+                  setTimeout(() => {
+                    resolve(0);
+                    audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                    audio.removeEventListener('error', handleError);
+                  }, 5000);
+                });
+              });
+              
+              Promise.all(audioPromises).then(durations => {
+                const totalDuration = durations.reduce((sum, d) => sum + d, 0);
+                if (totalDuration > 0) {
+                  const minutes = Math.floor(totalDuration / 60);
+                  const seconds = Math.floor(totalDuration % 60);
+                  const formattedDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                  
+                  // Update FlowItem duration
+                  setFlowItems(prev => prev.map(flowItem => {
+                    if (flowItem.id === item.id && flowItem.duration !== formattedDuration) {
+                      return { ...flowItem, duration: formattedDuration };
+                    }
+                    return flowItem;
+                  }));
+                }
+              });
+            };
+            
+            // Delay to ensure URLs are ready
+            setTimeout(calculateDuration, 300);
         }
     } catch (error) {
         console.error("TTS Error", error);
@@ -247,10 +375,12 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
     }
   };
 
-  const generateFlowList = async () => {
+  const generateFlowList = async (retryCount = 0) => {
     if (rawInputs.length === 0) return;
     
+    const maxRetries = 2;
     setIsGenerating(true);
+    setGenerationProgress(retryCount > 0 ? `重试中 (${retryCount}/${maxRetries})...` : '正在上传文件...');
 
     try {
         const formData = new FormData();
@@ -261,14 +391,28 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         // Add generation preferences
         formData.append('preferences', JSON.stringify(generationPreferences));
 
-        // Use the new API
+        setGenerationProgress(retryCount > 0 ? `重试中 (${retryCount}/${maxRetries})...` : '正在分析内容...');
+        
+        // Use the new API with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 65000); // 65s timeout (slightly more than Vercel's 60s)
+        
         let response: Response;
         try {
             response = await fetch(getApiUrl('/api/analyze'), {
                 method: 'POST',
                 body: formData,
+                signal: controller.signal,
             });
+            clearTimeout(timeoutId);
         } catch (fetchError: any) {
+            clearTimeout(timeoutId);
+            
+            // Check if it's an abort error (timeout)
+            if (fetchError.name === 'AbortError') {
+                throw new Error('TIMEOUT_ERROR');
+            }
+            
             // Network error - backend is likely not running or CORS issue
             console.error("Network error:", fetchError);
             throw new Error('NETWORK_ERROR');
@@ -277,23 +421,55 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         if (!response.ok) {
             // Try to parse error message from response
             let errorMessage = `服务器错误: ${response.status} ${response.statusText}`;
+            let isRetryable = false;
+            
             try {
                 const errorData = await response.json();
                 if (errorData.error) {
                     errorMessage = errorData.error;
+                    // Check if error suggests retry
+                    isRetryable = errorMessage.includes('超时') || 
+                                  errorMessage.includes('timeout') || 
+                                  errorMessage.includes('重试') ||
+                                  response.status === 504 ||
+                                  response.status === 503;
                 }
             } catch (e) {
                 // If response is not JSON, use default message
             }
+            
+            // Auto-retry for timeout errors
+            if (isRetryable && retryCount < maxRetries) {
+                console.log(`Retrying due to timeout (attempt ${retryCount + 1}/${maxRetries})...`);
+                setGenerationProgress(`请求超时，自动重试 (${retryCount + 1}/${maxRetries})...`);
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s before retry
+                return generateFlowList(retryCount + 1);
+            }
+            
             throw new Error(`HTTP_ERROR|${response.status}|${errorMessage}`);
         }
 
+        setGenerationProgress('正在生成内容...');
         const data = await response.json();
         
         // Check if response contains error
         if (data.error) {
+            // Check if error suggests retry
+            const isRetryable = data.error.includes('超时') || 
+                                data.error.includes('timeout') || 
+                                data.error.includes('重试');
+            
+            if (isRetryable && retryCount < maxRetries) {
+                console.log(`Retrying due to error (attempt ${retryCount + 1}/${maxRetries})...`);
+                setGenerationProgress(`生成失败，自动重试 (${retryCount + 1}/${maxRetries})...`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                return generateFlowList(retryCount + 1);
+            }
+            
             throw new Error(`SERVER_ERROR|${data.error}`);
         }
+        
+        setGenerationProgress('处理结果...');
         
         // Archive raw inputs
         setArchivedInputs(prev => [...prev, ...rawInputs]);
@@ -339,29 +515,47 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         setFlowItems(prev => [aiFlowItem, ...prev]);
         setReadyToFlow(true);
         setShowInputPanel(false);
+        setGenerationProgress('');
 
     } catch (error: any) {
         console.error("Failed to generate flow list:", error);
         
         let errorMessage = "生成失败";
+        let canRetry = false;
         
-        if (error.message === 'NETWORK_ERROR') {
+        if (error.message === 'TIMEOUT_ERROR') {
+            errorMessage = "请求超时（65秒）\n\n可能原因：\n1. 文件过大\n2. 服务器繁忙\n\n建议：\n1. 使用较小的文件\n2. 点击「重试」按钮";
+            canRetry = true;
+        } else if (error.message === 'NETWORK_ERROR') {
             errorMessage = "生成失败，无法连接到后端服务\n\n请检查：\n1. 后端服务是否已启动\n2. 网络连接是否正常";
         } else if (error.message.startsWith('HTTP_ERROR|')) {
             const parts = error.message.split('|');
             const statusCode = parts[1];
             const httpError = parts.slice(2).join('|');
-            errorMessage = `生成失败 (HTTP ${statusCode})\n\n${httpError}\n\n请检查后端服务日志。`;
+            errorMessage = `生成失败 (HTTP ${statusCode})\n\n${httpError}`;
+            canRetry = statusCode === '504' || statusCode === '503';
         } else if (error.message.startsWith('SERVER_ERROR|')) {
             const serverError = error.message.replace('SERVER_ERROR|', '');
             errorMessage = `生成失败: ${serverError}`;
+            canRetry = serverError.includes('超时') || serverError.includes('重试');
         } else {
-            errorMessage = `生成失败: ${error.message || '未知错误'}\n\n请检查后端服务是否启动 (npm run dev in server folder)`;
+            errorMessage = `生成失败: ${error.message || '未知错误'}`;
         }
         
-        alert(errorMessage);
+        // Show retry option if applicable
+        if (canRetry && retryCount < maxRetries) {
+            const shouldRetry = confirm(`${errorMessage}\n\n是否自动重试？`);
+            if (shouldRetry) {
+                setGenerationProgress(`手动重试中...`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                return generateFlowList(retryCount + 1);
+            }
+        } else {
+            alert(errorMessage);
+        }
     } finally {
         setIsGenerating(false);
+        setGenerationProgress('');
     }
   };
 
@@ -468,22 +662,29 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
 
         {/* Generate Button - Only show when there are inputs */}
         {rawInputs.length > 0 && (
-            <button 
-                onClick={generateFlowList}
-                disabled={isGenerating}
-                className={clsx(
-                    "w-full py-3 rounded-xl flex items-center justify-center gap-2 font-medium text-sm transition-all",
-                    !isGenerating
-                        ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-200" 
-                        : "bg-slate-100 text-slate-400 cursor-not-allowed"
+            <div className="space-y-2">
+                <button 
+                    onClick={() => generateFlowList()}
+                    disabled={isGenerating}
+                    className={clsx(
+                        "w-full py-3 rounded-xl flex items-center justify-center gap-2 font-medium text-sm transition-all",
+                        !isGenerating
+                            ? "bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-200" 
+                            : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                    )}
+                >
+                    {isGenerating ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" /> {generationProgress || '生成中...'}</>
+                    ) : (
+                        <><Sparkles size={16} /> AI 整理</>
+                    )}
+                </button>
+                {isGenerating && (
+                    <p className="text-xs text-slate-400 text-center">
+                        大文件可能需要 30-60 秒，请耐心等待
+                    </p>
                 )}
-            >
-                {isGenerating ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> 生成中...</>
-                ) : (
-                    <><Sparkles size={16} /> AI 整理</>
-                )}
-            </button>
+            </div>
         )}
     </div>
     );
