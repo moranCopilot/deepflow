@@ -40,8 +40,24 @@ export const WS_URL = getWebSocketUrl();
 
 export function getApiUrl(path: string): string {
   const baseUrl = API_BASE_URL;
-  // Remove leading slash if baseUrl ends with slash or path starts with slash
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  return `${baseUrl}${cleanPath}`;
+  
+  // If baseUrl is empty (relative path), return the path directly
+  if (!baseUrl) {
+    return cleanPath;
+  }
+  
+  // If baseUrl ends with slash, remove it to avoid double slashes
+  const cleanBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  return `${cleanBaseUrl}${cleanPath}`;
 }
+
+// Debug function to log API configuration
+console.log('API Configuration:', {
+  API_BASE_URL: API_BASE_URL || '(relative)',
+  WS_URL,
+  PROD: import.meta.env.PROD,
+  exampleUrl: getApiUrl('/api/analyze'),
+  currentLocation: typeof window !== 'undefined' ? window.location.href : 'N/A'
+});
 

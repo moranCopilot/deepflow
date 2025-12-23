@@ -262,21 +262,32 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         formData.append('preferences', JSON.stringify(generationPreferences));
 
         // Use the new API
+        const apiUrl = getApiUrl('/api/analyze');
+        console.log('API URL:', apiUrl, 'Current location:', window.location.href);
+        
         let response: Response;
         try {
-            response = await fetch(getApiUrl('/api/analyze'), {
+            response = await fetch(apiUrl, {
                 method: 'POST',
                 body: formData,
             });
         } catch (fetchError: any) {
             // Network error - backend is likely not running or CORS issue
             console.error("Network error:", fetchError);
+            console.error("Failed URL:", apiUrl);
             throw new Error('NETWORK_ERROR');
         }
 
         if (!response.ok) {
             // Try to parse error message from response
             let errorMessage = `服务器错误: ${response.status} ${response.statusText}`;
+            const responseUrl = response.url || apiUrl;
+            console.error(`API Error: ${response.status} ${response.statusText}`, {
+                url: responseUrl,
+                status: response.status,
+                statusText: response.statusText
+            });
+            
             try {
                 const errorData = await response.json();
                 if (errorData.error) {
@@ -284,7 +295,14 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                 }
             } catch (e) {
                 // If response is not JSON, use default message
+                console.error('Failed to parse error response:', e);
             }
+            
+            // Provide more helpful error message for 404
+            if (response.status === 404) {
+                errorMessage = `API 路由未找到 (404)\n\n请求的 URL: ${responseUrl}\n\n请检查：\n1. 后端服务是否正常运行\n2. API 路径配置是否正确\n3. 如果使用反向代理，请检查代理配置`;
+            }
+            
             throw new Error(`HTTP_ERROR|${response.status}|${errorMessage}`);
         }
 
