@@ -1248,11 +1248,14 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         // 检查并缓存文件
         for (const file of files) {
           try {
+            console.log('[Cache] 检查文件缓存:', file.name);
             const isCached = await cacheManager.isFileCached(file);
+            console.log('[Cache] 文件缓存状态:', isCached ? '已缓存' : '未缓存');
             
             // 缓存新文件（如果未缓存）
             if (!isCached) {
-              await cacheManager.cacheFile(file);
+              const fileHash = await cacheManager.cacheFile(file);
+              console.log('[Cache] 文件缓存结果:', fileHash ? '成功' : '失败');
             } else {
               console.log('[Cache] 文件已缓存:', file.name);
               // 文件已缓存，但不在此时使用缓存，等用户点击 AI 消化时再使用
@@ -1433,8 +1436,12 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         if (selectedFiles.length > 0) {
           const firstFile = selectedFiles[0];
           try {
+            console.log('[Cache] 开始检查缓存，文件:', firstFile.name);
             const fileHash = await generateFileHash(firstFile);
+            console.log('[Cache] 文件 hash:', fileHash, 'preset:', genPreset);
+            
             const cachedFlowItem = cacheManager.getCachedFlowItem(fileHash, genPreset);
+            console.log('[Cache] 缓存检查结果:', cachedFlowItem ? '命中' : '未命中');
             
             if (cachedFlowItem) {
               console.log('[Cache] 使用缓存的 FlowItem');
