@@ -105,15 +105,32 @@ app.post('/api/tts', async (req, res): Promise<any> => {
     req.setTimeout(300000);
     res.setTimeout(300000);
 
-    const { script, preset, contentType } = req.body;
+    const { script, text, preset, contentType } = req.body;
+
+    let normalizedScript: Array<{ speaker: string; text: string }> | null =
+        Array.isArray(script)
+            ? script
+                  .map((line: any) => ({
+                      speaker: typeof line?.speaker === 'string' ? line.speaker : '',
+                      text: typeof line?.text === 'string' ? line.text : (typeof line?.content === 'string' ? line.content : '')
+                  }))
+                  .filter((line: { speaker: string; text: string }) => line.text.trim().length > 0)
+            : null;
 
     // 验证输入
-    if (!script || !Array.isArray(script) || script.length === 0) {
-        return res.status(400).json({ error: "Script is required and must be a non-empty array" });
+    if (!normalizedScript || normalizedScript.length === 0) {
+        // Backward compatibility: allow `{ text: string }` payload
+        if (typeof text === 'string' && text.trim().length > 0) {
+            normalizedScript = [{ speaker: '', text }];
+        } else {
+        return res.status(400).json({
+            error: "Script is required and must be a non-empty array with non-empty 'text' fields"
+        });
+        }
     }
 
     // 验证 script 格式
-    const isValidScript = script.every((item: any) => 
+    const isValidScript = normalizedScript.every((item: any) =>
         item && typeof item.speaker === 'string' && typeof item.text === 'string'
     );
     if (!isValidScript) {
@@ -130,7 +147,7 @@ app.post('/api/tts', async (req, res): Promise<any> => {
         createTask(taskId);
 
         // 异步处理（不等待完成）
-        processTTSAsync(taskId, script, preset || '', contentType || '').catch((err) => {
+        processTTSAsync(taskId, normalizedScript as any, preset || '', contentType || '').catch((err) => {
             console.error(`Task ${taskId} processing error:`, err);
         });
 

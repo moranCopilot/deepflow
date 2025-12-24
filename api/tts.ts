@@ -18,6 +18,9 @@ import { generateGoogleTTS } from './tts-processor.js';
  * 解决 Vercel Serverless Function 无法维持后台长任务和内存状态的问题。
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Lightweight runtime fingerprint for debugging deployments.
+  res.setHeader('X-Deepflow-TTS', 'vercel-stateless-v3');
+
   // 处理 CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -105,12 +108,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    const { script, preset, contentType } = body || {};
+    const { script, text, preset, contentType } = body || {};
+
+    const normalizedScript =
+      Array.isArray(script)
+        ? script
+            .map((line: any) => ({
+              speaker: typeof line?.speaker === 'string' ? line.speaker : '',
+              text: typeof line?.text === 'string' ? line.text : ''
+            }))
+            .filter((line: { speaker: string; text: string }) => line.text.trim().length > 0)
+        : null;
 
     // 验证输入
-    if (!script || !Array.isArray(script) || script.length === 0) {
+    if (!normalizedScript || normalizedScript.length === 0) {
+      // Backward compatibility: allow `{ text: string }` payload
+      if (typeof text === 'string' && text.trim().length > 0) {
+        const urls = generateGoogleTTS([{ speaker: '', text }], false);
+        return res.json({
+          taskId: 'google-' + Date.now(),
+          status: 'completed',
+          result: { urls },
+          provider: 'google',
+          handler: 'vercel-stateless-v3'
+        });
+      }
+
       console.error('[TTS] Invalid script payload:', JSON.stringify(body || {}).substring(0, 500));
-      return res.status(400).json({ error: "Script is required and must be a non-empty array" });
+      return res.status(400).json({
+        error:
+          "Script is required and must be a non-empty array with non-empty 'text' fields (or provide non-empty 'text' string)",
+        handler: 'vercel-stateless-v3',
+        received: {
+          hasScript: Array.isArray(script),
+          scriptLength: Array.isArray(script) ? script.length : 0,
+          hasText: typeof text === 'string',
+          textLength: typeof text === 'string' ? text.length : 0
+        }
+      });
     }
 
     const isQuickSummary = preset === 'quick_summary' || contentType === 'output';
@@ -131,9 +166,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             
             // asyncMode = true: 只提交任务，不轮询
             if (isQuickSummary) {
-                result = await callFlowSpeechDirect(script, undefined, true);
+                result = await callFlowSpeechDirect(normalizedScript, undefined, true);
             } else {
-                result = await callScriptToSpeech(script, undefined, true);
+                result = await callScriptToSpeech(normalizedScript, undefined, true);
             }
             
             // 如果拿到了 episodeId，返回 pending 状态让前端轮询
@@ -143,7 +178,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     taskId: result.episodeId, // 透传 ID
                     status: 'pending',
                     message: 'Task submitted to ListenHub',
-                    provider: 'listenhub'
+                    provider: 'listenhub',
+                    handler: 'vercel-stateless-v3'
                 });
             } 
             
@@ -154,7 +190,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     taskId: 'completed-' + Date.now(),
                     status: 'completed',
                     result: result,
-                    provider: 'listenhub'
+                    provider: 'listenhub',
+                    handler: 'vercel-stateless-v3'
                 });
             }
 
@@ -177,7 +214,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     // Google TTS Fallback
     try {
-        const urls = generateGoogleTTS(script, isDeepAnalysis);
+        const urls = generateGoogleTTS(normalizedScript, isDeepAnalysis);
         console.log('[TTS] Google TTS generated successfully');
         
         return res.json({
@@ -185,6 +222,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             status: 'completed',
             result: { urls },
             provider: 'google',
+            handler: 'vercel-stateless-v3',
             // 如果是从 ListenHub Fallback 过来的，带上错误原因
             fallbackReason:
               typeof listenHubError !== 'undefined'

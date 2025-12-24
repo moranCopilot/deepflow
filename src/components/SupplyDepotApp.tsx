@@ -27,7 +27,7 @@ interface RawInput {
 
 type SceneTag = 'commute' | 'home_charge' | 'focus' | 'sleep_meditation' | 'qa_memory' | 'daily_review' | 'default';
 
-interface FlowItem {
+export interface FlowItem {
     id: string;
     title: string;
     duration: string;
@@ -383,21 +383,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
           : item
       ));
       
-      // 6. 生成 TTS 音频
-      const scriptText = reviewData.script.map((s: { speaker: string; text: string }) => s.text).join('\n');
-      const ttsResponse = await fetch(getApiUrl('/api/tts'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: scriptText })
-      });
-      
-      if (!ttsResponse.ok) {
-        throw new Error(`TTS API 错误: ${ttsResponse.status}`);
-      }
-      
-      await ttsResponse.json(); // TTS 音频已生成，这里不需要使用返回值
-      
-      // 7. 替换占位 Item 为实际的 FlowItem
+      // 6. 替换占位 Item 为实际的 FlowItem（音频在用户点击播放时再生成，避免阻塞/失败导致整条复盘生成失败）
       const reviewItem: FlowItem = {
         id: placeholderItem.id,  // 保持相同的 ID
         title: reviewData.title || '今日复盘',
@@ -426,7 +412,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         item.id === placeholderItem.id ? reviewItem : item
       ));
       
-      // 8. 标记已触发
+      // 7. 标记已触发
       setHasTriggeredReview(true);
     } catch (error) {
       // 生成失败，移除占位 Item 或显示错误状态
@@ -678,6 +664,10 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         if (hlsRef.current) {
             hlsRef.current.destroy();
             hlsRef.current = null;
+        }
+        // Cleanup blob URLs to prevent memory leaks
+        if (audioUrl && audioUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(audioUrl);
         }
     };
   }, [audioUrl]);
@@ -961,13 +951,41 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
     }
 
     try {
+      const sanitizedScript = item.script
+        .map((line) => ({
+          speaker: typeof line?.speaker === 'string' ? line.speaker : '',
+          text: typeof line?.text === 'string' ? line.text : ''
+        }))
+        .filter((line) => line.text.trim().length > 0);
+
+      if (sanitizedScript.length === 0) {
+        console.warn('[SupplyDepot] Script has no valid text lines, skipping TTS generation');
+        setAudioError('无法生成音频：脚本内容为空');
+        setIsPlayingAudio(false);
+        setTTSProgress(null);
+        return;
+      }
+
       // 判断使用哪种模式
       const isQuickSummary = item.contentType === 'output';
       const isDeepAnalysis = item.contentType === 'discussion';
       
       // 1. 创建任务
+      const text = sanitizedScript
+        .map((line) => {
+          const speaker = line.speaker.trim();
+          const content = line.text.trim();
+          if (!speaker) return content;
+          return isDeepAnalysis ? `${speaker}: ${content}` : content;
+        })
+        .join('\n');
+
       const requestPayload = {
-        script: item.script,
+        // Include both `script` and `text` for backward compatibility across deployments.
+        // - New server: uses `script` for ListenHub/Google decisions.
+        // - Old server: may only accept `text`.
+        script: sanitizedScript,
+        text,
         preset: isQuickSummary ? 'quick_summary' : isDeepAnalysis ? 'deep_analysis' : undefined,
         contentType: item.contentType
       };
@@ -2022,7 +2040,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
   };
 
   // 拨轮场景切换组件 (Revised for Horizontal Layout)
-  const SceneWheel = () => {
+  const renderSceneWheel = () => {
     // Show even if only 1 scene, but hide arrows
     if (sceneTagsArray.length === 0) return null;
 
@@ -2043,48 +2061,52 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
           {/* Previous Scene (Left) - Only show if multiple scenes */}
           {!isSingleScene && (
             <motion.div
+                layout
                 initial={{ opacity: 0.3, scale: 0.8, x: 20 }}
                 animate={{ opacity: 0.4, scale: 0.85, x: 0 }}
-                className="flex flex-col items-center gap-2 cursor-pointer z-0 active:scale-95 transition-transform"
+                className="flex flex-col items-center gap-2 cursor-pointer z-0 active:scale-95 transition-transform w-20"
                 onClick={() => handleSceneChange('prev')}
             >
                 <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-colors">
                 <prevScene.icon size={20} className="text-white/40" />
                 </div>
-                <span className="text-[10px] text-white/30 font-medium">{prevScene.label}</span>
+                <span className="text-[10px] text-white/30 font-medium truncate w-full text-center">{prevScene.label}</span>
             </motion.div>
           )}
 
           {/* Current Scene (Center) */}
           <motion.div
+            layout
             initial={{ scale: 0.9 }}
             animate={{ scale: 1 }}
-            className="flex flex-col items-center gap-3 z-10 mx-2"
+            className="flex flex-col items-center gap-3 z-10 mx-2 w-32"
           >
             <motion.div
+              layout
               className="w-24 h-24 rounded-full bg-gradient-to-br from-indigo-500/30 to-purple-500/30 border-2 border-white/20 flex items-center justify-center shadow-lg shadow-indigo-500/20"
               whileHover={{ scale: 1.05 }}
             >
               <currentScene.icon size={36} className="text-white" />
             </motion.div>
-            <div className="flex flex-col items-center gap-1">
-              <span className="text-sm font-bold text-white">{currentScene.label}</span>
-              <span className="text-[10px] text-white/50">{currentScene.description}</span>
+            <div className="flex flex-col items-center gap-1 w-full">
+              <span className="text-sm font-bold text-white truncate w-full text-center">{currentScene.label}</span>
+              <span className="text-[10px] text-white/50 truncate w-full text-center">{currentScene.description}</span>
             </div>
           </motion.div>
 
           {/* Next Scene (Right) - Only show if multiple scenes */}
           {!isSingleScene && (
             <motion.div
+                layout
                 initial={{ opacity: 0.3, scale: 0.8, x: -20 }}
                 animate={{ opacity: 0.4, scale: 0.85, x: 0 }}
-                className="flex flex-col items-center gap-2 cursor-pointer z-0 active:scale-95 transition-transform"
+                className="flex flex-col items-center gap-2 cursor-pointer z-0 active:scale-95 transition-transform w-20"
                 onClick={() => handleSceneChange('next')}
             >
                 <div className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-colors">
                 <nextScene.icon size={20} className="text-white/40" />
                 </div>
-                <span className="text-[10px] text-white/30 font-medium">{nextScene.label}</span>
+                <span className="text-[10px] text-white/30 font-medium truncate w-full text-center">{nextScene.label}</span>
             </motion.div>
           )}
         </div>
@@ -2157,7 +2179,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
                  </AnimatePresence>
             </div>
             
-            <SceneWheel />
+            {renderSceneWheel()}
         </div>
 
         {/* Bottom Section: End Button */}
@@ -2186,6 +2208,7 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         className="hidden" 
         multiple 
       />
+      
       <div className="px-4 pt-4 pb-2 flex items-start gap-3">
         <button
           onClick={() => setIsGardenOpen(true)}

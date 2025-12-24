@@ -3,14 +3,12 @@
  * 使用 IndexedDB 存储文件和音频，localStorage 存储元数据
  */
 
-import { generateFileHash, generateScriptHash, generateFlowItemCacheKey, generateAudioCacheKey } from './file-utils';
+import { generateFileHash, generateFlowItemCacheKey, generateAudioCacheKey } from './file-utils';
 import type { FlowItem } from '../components/SupplyDepotApp';
-import type { KnowledgeCard } from '../components/SupplyDepotApp';
 
 const DB_NAME = 'deepflow_cache';
 const DB_VERSION = 1;
 const CACHE_EXPIRY_DAYS = 30;
-const MAX_CACHE_SIZE_MB = 500;
 
 interface CachedFile {
   key: string;
@@ -658,4 +656,3 @@ export class CacheManager {
 
 // 导出单例
 export const cacheManager = new CacheManager();
-
