@@ -918,20 +918,33 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
       return flowItem;
     }));
 
+    // 检查脚本是否为空
+    if (!item.script || item.script.length === 0) {
+        console.warn('[SupplyDepot] Script is empty, skipping TTS generation');
+        setAudioError('无法生成音频：脚本内容为空');
+        setIsPlayingAudio(false);
+        setTTSProgress(null);
+        return;
+    }
+
     try {
       // 判断使用哪种模式
       const isQuickSummary = item.contentType === 'output';
       const isDeepAnalysis = item.contentType === 'discussion';
       
       // 1. 创建任务
+      const requestPayload = {
+        script: item.script,
+        preset: isQuickSummary ? 'quick_summary' : isDeepAnalysis ? 'deep_analysis' : undefined,
+        contentType: item.contentType
+      };
+      
+      console.log('[SupplyDepot] Creating TTS task with payload:', JSON.stringify(requestPayload).substring(0, 200) + '...');
+
       const createResponse = await fetch(getApiUrl('/api/tts'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          script: item.script,
-          preset: isQuickSummary ? 'quick_summary' : isDeepAnalysis ? 'deep_analysis' : undefined,
-          contentType: item.contentType
-        })
+        body: JSON.stringify(requestPayload)
       });
       
       const createData = await createResponse.json();
@@ -941,59 +954,75 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
       }
       
       const { taskId } = createData;
-      if (!taskId) {
-        throw new Error('未收到任务 ID');
-      }
       
-      // 2. 轮询任务状态
-      const pollTaskStatus = async (): Promise<{ url?: string; urls?: string[]; duration?: number }> => {
-        const maxAttempts = 60; // 最多轮询 5 分钟（每 5 秒一次）
-        let attempts = 0;
-        
-        return new Promise((resolve, reject) => {
-          const poll = async () => {
-            try {
-              const statusResponse = await fetch(`${getApiUrl('/api/tts')}?taskId=${taskId}`);
-              const status = await statusResponse.json();
-              
-              // 更新进度显示
-              if (status.progress) {
-                setTTSProgress({
-                  stage: status.progress.stage || 'processing',
-                  message: status.progress.message || '处理中...',
-                  percentage: status.progress.percentage
-                });
-              }
-              
-              if (status.status === 'completed') {
-                setTTSProgress(null);
-                if (status.result) {
-                  resolve(status.result);
-                } else {
-                  reject(new Error('任务完成但未返回结果'));
+      let result: { url?: string; urls?: string[]; duration?: number };
+
+      // 如果 POST 请求直接返回了结果（如 Google TTS Fallback），则跳过轮询
+      if (createData.status === 'completed' && createData.result) {
+          console.log('[TTS] Task completed immediately', { 
+              provider: createData.provider, 
+              fallbackReason: createData.fallbackReason 
+          });
+          if (createData.fallbackReason) {
+              console.warn('[TTS] Warning: Fallback occurred:', createData.fallbackReason);
+          }
+          result = createData.result;
+          setTTSProgress(null);
+      } else {
+          if (!taskId) {
+            throw new Error('未收到任务 ID');
+          }
+          
+          // 2. 轮询任务状态
+          const pollTaskStatus = async (): Promise<{ url?: string; urls?: string[]; duration?: number }> => {
+            const maxAttempts = 60; // 最多轮询 5 分钟（每 5 秒一次）
+            let attempts = 0;
+            
+            return new Promise((resolve, reject) => {
+              const poll = async () => {
+                try {
+                  const statusResponse = await fetch(`${getApiUrl('/api/tts')}?taskId=${taskId}`);
+                  const status = await statusResponse.json();
+                  
+                  // 更新进度显示
+                  if (status.progress) {
+                    setTTSProgress({
+                      stage: status.progress.stage || 'processing',
+                      message: status.progress.message || '处理中...',
+                      percentage: status.progress.percentage
+                    });
+                  }
+                  
+                  if (status.status === 'completed') {
+                    setTTSProgress(null);
+                    if (status.result) {
+                      resolve(status.result);
+                    } else {
+                      reject(new Error('任务完成但未返回结果'));
+                    }
+                  } else if (status.status === 'failed') {
+                    setTTSProgress(null);
+                    reject(new Error(status.error || 'TTS 生成失败'));
+                  } else if (attempts >= maxAttempts) {
+                    setTTSProgress(null);
+                    reject(new Error('TTS 生成超时，请稍后重试'));
+                  } else {
+                    attempts++;
+                    setTimeout(poll, 5000); // 每 5 秒轮询一次，降低频率
+                  }
+                } catch (error: any) {
+                  setTTSProgress(null);
+                  reject(error);
                 }
-              } else if (status.status === 'failed') {
-                setTTSProgress(null);
-                reject(new Error(status.error || 'TTS 生成失败'));
-              } else if (attempts >= maxAttempts) {
-                setTTSProgress(null);
-                reject(new Error('TTS 生成超时，请稍后重试'));
-              } else {
-                attempts++;
-                setTimeout(poll, 5000); // 每 5 秒轮询一次，降低频率
-              }
-            } catch (error: any) {
-              setTTSProgress(null);
-              reject(error);
-            }
+              };
+              
+              poll();
+            });
           };
           
-          poll();
-        });
-      };
-      
-      // 3. 等待任务完成并设置音频 URL
-      const result: { url?: string; urls?: string[]; duration?: number } = await pollTaskStatus();
+          // 3. 等待任务完成并设置音频 URL
+          result = await pollTaskStatus();
+      }
       
       // 缓存音频
       try {

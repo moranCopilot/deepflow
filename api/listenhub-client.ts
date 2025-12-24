@@ -73,6 +73,79 @@ async function callWithRetry<T>(
 }
 
 /**
+ * 单次查询 Episode 状态（不轮询）
+ */
+export async function checkEpisodeStatus(
+  episodeId: string,
+  apiKey: string
+): Promise<{ status: string; url?: string; duration?: number; error?: string }> {
+  const config = getListenHubConfig();
+  const response = await fetchWithTimeout(
+    `${config.baseUrl}/flow-speech/episodes/${episodeId}`,
+    {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    },
+    10000 // 10 秒超时
+  );
+
+  if (!response.ok) {
+    throw new Error(`查询 Episode 状态失败: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  
+  // 统一提取数据对象
+  let episode = data;
+  if ((data.code === 0 || data.code === '0') && data.data) {
+    episode = data.data;
+  } else if (data.data) {
+    episode = data.data;
+  }
+
+  const status = episode.status || episode.processStatus || data.status;
+  
+  // 提取 URL (优先 MP3)
+  const mp3Url = 
+    episode.audioUrl || 
+    episode.audio_url || 
+    episode.url || 
+    episode.audio?.url || 
+    data.audioUrl || 
+    data.url;
+
+  const m3u8Url = 
+    episode.audioStreamUrl || 
+    data.audioStreamUrl;
+
+  const result: { status: string; url?: string; duration?: number; error?: string } = {
+    status: status || 'unknown',
+    duration: episode.duration || episode.audio?.duration || data.duration
+  };
+
+  if (mp3Url && typeof mp3Url === 'string' && mp3Url.trim().length > 0) {
+    result.url = mp3Url.trim();
+  } else if ((status === 'success' || status === 'completed') && m3u8Url && typeof m3u8Url === 'string') {
+    // 只有成功且无 MP3 时才返回 M3U8
+    result.url = m3u8Url.trim();
+  }
+
+  if (status === 'failed' || status === 'error' || status === 'failure') {
+    result.error = episode.error || episode.message || data.error || data.message || '音频生成失败';
+    result.status = 'failed';
+  } else if (status === 'success' || status === 'completed' || status === 'done') {
+    result.status = 'completed';
+  } else {
+    result.status = 'processing';
+  }
+
+  return result;
+}
+
+/**
  * 查询 Episode 状态并获取音频 URL
  */
 async function getEpisodeAudioUrl(
@@ -218,8 +291,9 @@ async function getEpisodeAudioUrl(
  */
 export async function callFlowSpeechDirect(
   script: ScriptItem[],
-  onProgress?: (progress: { stage: string; message: string; percentage: number }) => void
-): Promise<{ url?: string; urls?: string[]; duration?: number }> {
+  onProgress?: (progress: { stage: string; message: string; percentage: number }) => void,
+  asyncMode: boolean = false
+): Promise<{ url?: string; urls?: string[]; duration?: number; episodeId?: string }> {
   const config = getListenHubConfig();
   if (!config.apiKey) {
     throw new Error('ListenHub API Key 未配置');
@@ -354,9 +428,14 @@ export async function callFlowSpeechDirect(
     return result;
   }
 
-  console.log(`[ListenHub] Using episodeId to query audio:`, episodeId);
+    if (asyncMode) {
+      console.log(`[ListenHub] Async mode: returning episodeId immediately:`, episodeId);
+      return { episodeId };
+    }
 
-  // 使用 episodeId 查询音频 URL
+    console.log(`[ListenHub] Using episodeId to query audio:`, episodeId);
+
+    // 使用 episodeId 查询音频 URL
   onProgress?.({
     stage: 'generating',
     message: '等待音频生成...',
@@ -379,8 +458,9 @@ export async function callFlowSpeechDirect(
  */
 export async function callScriptToSpeech(
   script: ScriptItem[],
-  onProgress?: (progress: { stage: string; message: string; percentage: number }) => void
-): Promise<{ url?: string; urls?: string[]; duration?: number }> {
+  onProgress?: (progress: { stage: string; message: string; percentage: number }) => void,
+  asyncMode: boolean = false
+): Promise<{ url?: string; urls?: string[]; duration?: number; episodeId?: string }> {
   const config = getListenHubConfig();
   if (!config.apiKey) {
     throw new Error('ListenHub API Key 未配置');
@@ -447,6 +527,12 @@ export async function callScriptToSpeech(
     } else if (data.data.episodeId || data.data.episode_id) {
       // 如果返回 episodeId，需要查询状态
       const episodeId = data.data.episodeId || data.data.episode_id;
+      
+      if (asyncMode) {
+        console.log(`[ListenHub] Async mode: returning episodeId immediately:`, episodeId);
+        return { episodeId };
+      }
+
       onProgress?.({
         stage: 'generating',
         message: '等待音频生成...',
@@ -476,6 +562,12 @@ export async function callScriptToSpeech(
   } else if (data.episodeId || data.episode_id) {
     // 直接返回了 episodeId（不在 data 中）
     const episodeId = data.episodeId || data.episode_id;
+
+    if (asyncMode) {
+        console.log(`[ListenHub] Async mode: returning episodeId immediately:`, episodeId);
+        return { episodeId };
+    }
+
     onProgress?.({
       stage: 'generating',
       message: '等待音频生成...',

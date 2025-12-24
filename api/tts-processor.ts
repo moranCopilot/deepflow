@@ -83,6 +83,35 @@ export async function processTTSAsync(
 }
 
 /**
+ * 生成 Google TTS URL（纯函数，无状态）
+ */
+export function generateGoogleTTS(script: ScriptItem[], isDeepAnalysis: boolean): string[] {
+  let finalText: string;
+  if (isDeepAnalysis && script.length > 0) {
+    finalText = script.map((line) => {
+      const speaker = line.speaker || '';
+      const content = line.text || '';
+      return speaker ? `${speaker}: ${content}` : content;
+    }).join('\n');
+  } else {
+    finalText = script.map(line => line.text).join('\n');
+  }
+
+  if (!finalText || finalText.trim().length === 0) {
+    throw new Error('文本内容为空');
+  }
+
+  // 调用 Google TTS
+  const audioData = googleTTS.getAllAudioUrls(finalText, {
+    lang: 'zh-CN',
+    slow: false,
+    host: 'https://translate.google.com'
+  });
+
+  return audioData.map(item => item.url);
+}
+
+/**
  * Fallback 到 Google TTS
  */
 async function fallbackToGoogleTTS(
