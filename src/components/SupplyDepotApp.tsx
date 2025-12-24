@@ -90,6 +90,17 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
   const [deleteConfirmDialog, setDeleteConfirmDialog] = useState<{ show: boolean; fileId: string | null; fileName: string | null }>({ show: false, fileId: null, fileName: null });
   const hlsRef = useRef<Hls | null>(null);
   
+  // Update readyToFlow based on flowItems status
+  useEffect(() => {
+    // Check if we have any items that are ready (not generating)
+    const hasReadyItems = flowItems.some(item => !item.isGenerating);
+    if (hasReadyItems && !readyToFlow) {
+        setReadyToFlow(true);
+    } else if (flowItems.length === 0 && readyToFlow) {
+        setReadyToFlow(false);
+    }
+  }, [flowItems, readyToFlow]);
+
   // 今日复盘相关状态
   const [hasTriggeredReview, setHasTriggeredReview] = useState(false);
 
@@ -590,10 +601,17 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         hls.loadSource(audioUrl);
         hls.attachMedia(audioRef.current);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          audioRef.current?.play().catch(err => {
-             console.error('HLS Play failed:', err);
-             setAudioError('播放失败，请重试');
-          });
+          const playPromise = audioRef.current?.play();
+          if (playPromise !== undefined) {
+              playPromise.catch(err => {
+                  if (err.name === 'AbortError') {
+                      console.log('HLS Play interrupted by new request');
+                      return;
+                  }
+                  console.error('HLS Play failed:', err);
+                  setAudioError('播放失败，请重试');
+              });
+          }
         });
         hls.on(Hls.Events.ERROR, (_event, data) => {
              if (data.fatal) {
@@ -615,10 +633,17 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
       } else if (audioRef.current.canPlayType('application/vnd.apple.mpegurl')) {
         // Native HLS support (Safari)
         audioRef.current.src = audioUrl;
-        audioRef.current.play().catch(err => {
-            console.error('Native HLS Play failed:', err);
-            setAudioError('播放失败: 无法播放此音频格式');
-        });
+        const playPromise = audioRef.current.play();
+        if (playPromise !== undefined) {
+            playPromise.catch(err => {
+                if (err.name === 'AbortError') {
+                    console.log('Native HLS Play interrupted by new request');
+                    return;
+                }
+                console.error('Native HLS Play failed:', err);
+                setAudioError('播放失败: 无法播放此音频格式');
+            });
+        }
       } else {
         // Standard playback (MP3/WAV) - Fallback
         // If it's an m3u8 file and we reached here, it means neither HLS.js nor Native HLS is supported
@@ -629,15 +654,23 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         }
         
         audioRef.current.src = audioUrl;
-        audioRef.current.play().catch(err => {
-            console.error('Play failed:', err);
-            // Handle specific NotSupportedError
-            if (err.name === 'NotSupportedError') {
-                setAudioError('播放失败: 浏览器不支持此音频格式');
-            } else {
-                setAudioError('播放失败，请重试');
-            }
-        });
+        const playPromise = audioRef.current.play();
+        if (playPromise !== undefined) {
+            playPromise.catch(err => {
+                if (err.name === 'AbortError') {
+                    console.log('Play interrupted by new request');
+                    return;
+                }
+                
+                console.error('Play failed:', err);
+                // Handle specific NotSupportedError
+                if (err.name === 'NotSupportedError') {
+                    setAudioError('播放失败: 浏览器不支持此音频格式');
+                } else {
+                    setAudioError('播放失败，请重试');
+                }
+            });
+        }
       }
     }
     
@@ -1212,78 +1245,18 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
     if (e.target.files && e.target.files.length > 0) {
         const files = Array.from(e.target.files);
         
-        // 检查缓存
+        // 检查并缓存文件
         for (const file of files) {
           try {
-            const fileHash = await generateFileHash(file);
             const isCached = await cacheManager.isFileCached(file);
             
-            if (isCached) {
-              console.log('[Cache] 使用缓存的文件:', file.name);
-              
-              // 检查是否有对应的 FlowItem 缓存
-              const cachedFlowItem = cacheManager.getCachedFlowItem(fileHash, genPreset);
-              if (cachedFlowItem) {
-                console.log('[Cache] 使用缓存的 FlowItem');
-                
-                // 模拟生成流程的 loading（3-5 秒）
-                setIsGenerating(true);
-                setGenerationProgress('正在处理文件...');
-                
-                await new Promise(resolve => setTimeout(resolve, 800));
-                setGenerationProgress('正在上传文件...');
-                
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                setGenerationProgress('正在分析内容...');
-                
-                await new Promise(resolve => setTimeout(resolve, 800));
-                setGenerationProgress('正在生成内容...');
-                
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                setGenerationProgress('正在处理结果...');
-                
-                await new Promise(resolve => setTimeout(resolve, 400));
-                
-                // 延迟后显示结果
-                setIsGenerating(false);
-                setGenerationProgress('');
-                
-                // 直接使用缓存的 flowItem
-                setFlowItems(prev => {
-                  // 检查是否已存在（避免重复添加）
-                  const exists = prev.some(item => item.id === cachedFlowItem.id);
-                  if (exists) {
-                    return prev;
-                  }
-                  return [...prev, cachedFlowItem];
-                });
-                
-                // 如果有知识卡片，也更新
-                if (cachedFlowItem.knowledgeCards && cachedFlowItem.knowledgeCards.length > 0) {
-                  onUpdateKnowledgeCards(prev => {
-                    // 合并知识卡片，避免重复
-                    const existingIds = new Set(prev.map((card: KnowledgeCard) => card.id));
-                    const newCards = cachedFlowItem.knowledgeCards!.filter((card: KnowledgeCard) => !existingIds.has(card.id));
-                    return [...prev, ...newCards];
-                  });
-                }
-                
-                // 添加视觉反馈（标记为从缓存加载）
-                const newInput = {
-                  id: Math.random().toString(36).slice(2, 11),
-                  type: currentInputType,
-                  name: file.name + ' (已缓存)',
-                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  timestamp: Date.now()
-                };
-                setRawInputs(prev => [...prev, newInput]);
-                setSelectedFiles(prev => [...prev, file]);
-                continue; // 跳过正常上传流程
-              }
+            // 缓存新文件（如果未缓存）
+            if (!isCached) {
+              await cacheManager.cacheFile(file);
+            } else {
+              console.log('[Cache] 文件已缓存:', file.name);
+              // 文件已缓存，但不在此时使用缓存，等用户点击 AI 消化时再使用
             }
-            
-            // 缓存新文件
-            await cacheManager.cacheFile(file);
           } catch (error) {
             console.error('[Cache] 文件缓存处理失败:', error);
             // 继续正常流程
@@ -1291,17 +1264,27 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
         }
         
         // 继续正常流程（未缓存或缓存未命中）
-        setSelectedFiles(prev => [...prev, ...files]);
+        // 检查文件是否已存在，避免重复添加
+        setSelectedFiles(prev => {
+          const existingKeys = new Set(prev.map(f => `${f.name}_${f.size}_${f.lastModified}`));
+          const newFiles = files.filter(f => !existingKeys.has(`${f.name}_${f.size}_${f.lastModified}`));
+          return [...prev, ...newFiles];
+        });
         
-        // Add visual feedback
-        const newInputs = files.map((file) => ({
-            id: Math.random().toString(36).slice(2, 11),
-            type: currentInputType,
-            name: file.name,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            timestamp: Date.now()
-        }));
-        setRawInputs(prev => [...prev, ...newInputs]);
+        // Add visual feedback（只添加新文件）
+        setRawInputs(prev => {
+          const existingNames = new Set(prev.map(input => input.name));
+          const newInputs = files
+            .filter(file => !existingNames.has(file.name))
+            .map((file) => ({
+              id: Math.random().toString(36).slice(2, 11),
+              type: currentInputType,
+              name: file.name,
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              timestamp: Date.now()
+            }));
+          return [...prev, ...newInputs];
+        });
     }
   };
 
@@ -1446,6 +1429,84 @@ export function SupplyDepotApp({ onStartFlow, onStopFlow, isFlowing, knowledgeCa
     setGenerationProgress(retryCount > 0 ? `重试中 (${retryCount}/${maxRetries})...` : '正在处理文件...');
 
     try {
+        // 检查缓存：如果所有文件都有缓存，直接使用缓存
+        if (selectedFiles.length > 0) {
+          const firstFile = selectedFiles[0];
+          try {
+            const fileHash = await generateFileHash(firstFile);
+            const cachedFlowItem = cacheManager.getCachedFlowItem(fileHash, genPreset);
+            
+            if (cachedFlowItem) {
+              console.log('[Cache] 使用缓存的 FlowItem');
+              
+              // 模拟生成流程的 loading（3-5 秒）
+              setGenerationProgress('正在处理文件...');
+              await new Promise(resolve => setTimeout(resolve, 800));
+              
+              setGenerationProgress('正在上传文件...');
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
+              setGenerationProgress('正在分析内容...');
+              await new Promise(resolve => setTimeout(resolve, 800));
+              
+              setGenerationProgress('正在生成内容...');
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
+              setGenerationProgress('正在处理结果...');
+              await new Promise(resolve => setTimeout(resolve, 400));
+              
+              // 延迟后显示结果
+              setIsGenerating(false);
+              setGenerationProgress('');
+              
+              // 直接使用缓存的 flowItem
+              setFlowItems(prev => {
+                // 检查是否已存在（避免重复添加）
+                const exists = prev.some(item => item.id === cachedFlowItem.id);
+                if (exists) {
+                  return prev;
+                }
+                
+                // 检查是否为首次生成 (当列表为空时，视为从 0 到 1 的生成)
+                const isFirstGeneration = prev.length === 0;
+                if (isFirstGeneration) {
+                  console.log('[Cache] 首次生成，添加默认 items');
+                  const defaultItems = getDefaultFlowItems();
+                  // 更新默认 items 状态为已完成（非生成中）
+                  const readyDefaultItems = defaultItems.map(item => ({
+                      ...item,
+                      isGenerating: false,
+                      generationProgress: undefined
+                  }));
+                  return [...readyDefaultItems, cachedFlowItem, ...prev];
+                }
+                
+                return [...prev, cachedFlowItem];
+              });
+              
+              // 如果有知识卡片，也更新
+              if (cachedFlowItem.knowledgeCards && cachedFlowItem.knowledgeCards.length > 0) {
+                onUpdateKnowledgeCards(prev => {
+                  // 合并知识卡片，避免重复
+                  const existingIds = new Set(prev.map((card: KnowledgeCard) => card.id));
+                  const newCards = cachedFlowItem.knowledgeCards!.filter((card: KnowledgeCard) => !existingIds.has(card.id));
+                  return [...prev, ...newCards];
+                });
+              }
+              
+              // 清理已处理的输入
+              setArchivedInputs(prev => [...prev, ...rawInputs]);
+              setRawInputs([]);
+              setSelectedFiles([]);
+              
+              return; // 使用缓存，跳过正常流程
+            }
+          } catch (error) {
+            console.error('[Cache] 检查缓存失败:', error);
+            // 继续正常流程
+          }
+        }
+        
         // 压缩文件（如果需要）
         setGenerationProgress('正在检查和压缩文件...');
         const processedFiles: File[] = [];
