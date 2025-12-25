@@ -179,7 +179,7 @@ export function SupplyDepotApp({
   }, [flowItems, readyToFlow]);
 
   // 今日复盘相关状态
-  const [hasTriggeredReview, setHasTriggeredReview] = useState(false);
+  // const [hasTriggeredReview, setHasTriggeredReview] = useState(false);
 
   // Generation Preferences
   const [genPreset, setGenPreset] = useState('quick_summary');
@@ -861,6 +861,7 @@ export function SupplyDepotApp({
   }, [selectedItem, selectedItem?.status, selectedItem?.playbackProgress?.hasStarted]);
 
   // 播放计数和触发检测：当达到5条时触发复盘
+  /*
   useEffect(() => {
     const playedCount = flowItems.filter(item => item.playbackProgress?.hasStarted === true).length;
     
@@ -870,6 +871,7 @@ export function SupplyDepotApp({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowItems, hasTriggeredReview]);
+  */
 
   // 获取可播放的音频项（排除 interactive 类型）
   const getPlayableItems = (items: FlowItem[], sceneTag?: SceneTag): FlowItem[] => {
@@ -1653,6 +1655,7 @@ export function SupplyDepotApp({
           document.body.appendChild(textArea);
           textArea.select();
           try {
+              // @ts-ignore: Deprecated but used as fallback
               document.execCommand('copy');
               setCopiedScript(true);
               setTimeout(() => setCopiedScript(false), 2000);
