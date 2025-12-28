@@ -124,6 +124,10 @@ export function GlassesDevice({ onCapture, nextImageSrc }: GlassesDeviceProps) {
                  </AnimatePresence>
             </div>
 
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-40 text-[10px] text-neutral-200 font-mono tracking-widest">
+                查看硬件设计图
+            </div>
+
             {/* Expand Button Overlay */}
             <AnimatePresence>
             {isHovered && !isCapturing && (
@@ -314,15 +318,20 @@ export function GlassesDevice({ onCapture, nextImageSrc }: GlassesDeviceProps) {
                             </motion.div>
                         ))
                     ) : (
-                        <motion.span 
+                        <motion.div 
                             key="text-label"
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            className="absolute top-0 text-[10px] text-neutral-400 font-mono tracking-widest uppercase"
+                            className="absolute top-0 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1"
                         >
-                            Quick Capture
-                        </motion.span>
+                            <span className="text-[10px] text-neutral-400 font-mono tracking-widest uppercase">
+                                Quick Capture
+                            </span>
+                            <span className="text-[9px] text-neutral-400">
+                                点击模拟拍照（采用预设的图片）
+                            </span>
+                        </motion.div>
                     )}
                  </AnimatePresence>
              </div>

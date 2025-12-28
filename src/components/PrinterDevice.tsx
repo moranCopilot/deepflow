@@ -234,8 +234,13 @@ export function PrinterDevice({
                             </div>
                         </div>
                     ) : (
-                        <div>
-                            {printedContents.length > 0 ? `> 打印中... (${printedContents.length})` : "> 就绪_"}
+                        <div className="flex flex-col items-center gap-1">
+                            <div>
+                                {printedContents.length > 0 ? `> 打印中... (${printedContents.length})` : "> 就绪_"}
+                            </div>
+                            <div className="text-[9px] text-neutral-300">
+                                查看硬件设计图
+                            </div>
                         </div>
                     )}
                 </div>

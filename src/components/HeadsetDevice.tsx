@@ -352,6 +352,10 @@ export function HeadsetDevice({
               isDeep ? "bg-red-400 text-red-400" : "bg-green-400 text-green-400"
           )} />
 
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 text-[10px] text-neutral-200 font-mono tracking-widest">
+            查看硬件设计图
+          </div>
+
           {/* Expand Button Overlay */}
           <AnimatePresence>
             {isHovered && (
@@ -468,7 +472,7 @@ export function HeadsetDevice({
        {/* Control Panel - Compact Mode */}
        <div className="w-full max-w-[320px] flex flex-col gap-4 items-center">
            {/* GoFlow Button */}
-            <div className="flex flex-col items-center gap-4">
+            <div className="flex flex-col items-center gap-2">
                  <button 
                      onPointerDown={handlePointerDown}
                     onPointerUp={handlePointerUp}
@@ -501,11 +505,17 @@ export function HeadsetDevice({
                 <span className="text-[10px] text-neutral-400 font-mono tracking-widest uppercase">
                     {isRecording ? "RECORDING..." : (isLongPressing ? "RELEASE TO SEND" : "GoFlow")}
                 </span>
+                <span className="text-[9px] text-neutral-400">
+                    (a) 点击进入 GoFlow
+                </span>
+                <span className="text-[9px] text-neutral-400">
+                    (b) 长按模拟录音（采用预设的音频）
+                </span>
            </div>
 
            {/* Environment Awareness Button */}
            {onActivateBackground && hasBackgroundEffect && (
-            <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-col items-center gap-1.5">
                 <button
                     onClick={() => {
                       onActivateBackground();
@@ -521,6 +531,9 @@ export function HeadsetDevice({
                     {currentEnvironmentScene 
                       ? SCENE_CONFIGS[currentEnvironmentScene].label 
                       : "切换环境"}
+                </span>
+                <span className="text-[9px] text-neutral-400">
+                    点击模拟环境触发（采用预设的 3 种环境）
                 </span>
             </div>
           )}

@@ -3199,8 +3199,8 @@ export function SupplyDepotApp({
         multiple 
       />
       
-      <div className="px-4 pt-4 pb-2 flex items-start gap-3">
-        <div className="flex items-center gap-2">
+      <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+        <div className="flex items-center gap-3">
           <button
             onClick={() => setIsGardenOpen(true)}
             className="w-10 h-10 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
@@ -3208,6 +3208,10 @@ export function SupplyDepotApp({
           >
             <Library size={18} />
           </button>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">Deep Flow</h1>
+        </div>
+
+        <div className="flex items-center gap-2">
           <button
             onClick={() => setIsRewardSystemOpen(true)}
             className="w-10 h-10 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
@@ -3215,26 +3219,16 @@ export function SupplyDepotApp({
           >
             <Award size={18} />
           </button>
+          {flowItems.length > 0 && (
+            <button
+              onClick={() => setShowInputPanel(true)}
+              className="w-10 h-10 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
+              aria-label="添加素材"
+            >
+              <Plus size={18} />
+            </button>
+          )}
         </div>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Deep Flow</h1>
-          <p className="text-slate-500 text-sm font-medium truncate">准备你的专注素材</p>
-        </div>
-        
-        {/* View Toggle - REMOVED (Controlled by parent) */}
-        <div className="flex items-center gap-2">
-            {/* Placeholder for alignment if needed */}
-        </div>
-
-        {flowItems.length > 0 && (
-          <button
-            onClick={() => setShowInputPanel(true)}
-            className="w-10 h-10 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-600 hover:bg-slate-50 transition-colors shrink-0"
-            aria-label="添加素材"
-          >
-            <Plus size={18} />
-          </button>
-        )}
       </div>
 
       {isGardenOpen && (

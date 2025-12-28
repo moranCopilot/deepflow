@@ -424,7 +424,7 @@ function App() {
             className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-neutral-50 rounded-full border border-neutral-200 shadow-sm hover:shadow transition-all group"
           >
             <Presentation size={18} className="text-neutral-500 group-hover:text-indigo-600 transition-colors" />
-            <span className="text-sm font-medium text-neutral-600 group-hover:text-neutral-900">Project Deck</span>
+            <span className="text-sm font-medium text-neutral-600 group-hover:text-neutral-900">项目说明书</span>
           </a>
         </header>
 
@@ -450,8 +450,7 @@ function App() {
                   />
               </PhoneFrame>
               <div className="flex flex-col items-center gap-1">
-                  <span className="text-sm font-extrabold text-neutral-800 tracking-[0.2em] uppercase">Go Flow App</span>
-                  <span className="text-[10px] font-medium text-neutral-400 tracking-wider uppercase opacity-80">Central Control Unit</span>
+                  <span className="text-sm font-extrabold text-neutral-800 tracking-[0.2em] uppercase">GoFlow App</span>
               </div>
           </div>
 
