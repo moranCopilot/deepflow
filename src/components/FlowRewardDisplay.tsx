@@ -1,7 +1,24 @@
 import { useEffect, useState } from 'react';
 import { Clock, Award } from 'lucide-react';
 import { IncentiveVisual } from './IncentiveVisual';
+import { CatVisual } from './CatVisual';
 import type { RewardData } from '../utils/reward-manager';
+
+type IncentiveTheme = 'tree' | 'cat';
+
+const THEME_STORAGE_KEY = 'deepflow_incentive_theme';
+const CAT_COLOR_STORAGE_KEY = 'deepflow_cat_color';
+const DEFAULT_CAT_COLOR = '#FF6B6B';
+
+// 阶段名称映射：树苗 -> 猫咪
+const STAGE_NAME_MAP: Record<string, string> = {
+  '种子期': '幼猫期',
+  '树苗期': '小猫期',
+  '小树期': '成猫期',
+  '中树期': '大猫期',
+  '大树期': '猫王期',
+  '森林期': '猫群期',
+};
 
 interface FlowRewardDisplayProps {
   sessionStartTime: number | null;
@@ -116,9 +133,71 @@ function formatTotalDuration(seconds: number): string {
 export function FlowRewardDisplay({ sessionStartTime, stats, totalHours }: FlowRewardDisplayProps) {
   const [currentDuration, setCurrentDuration] = useState(0);
   const [currentPoints, setCurrentPoints] = useState(0);
+  
+  // 读取主题和颜色偏好
+  const [themeType, setThemeType] = useState<IncentiveTheme>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem(THEME_STORAGE_KEY);
+      return (stored === 'tree' || stored === 'cat') ? stored : 'cat';
+    }
+    return 'cat';
+  });
+  
+  const [catColor, setCatColor] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem(CAT_COLOR_STORAGE_KEY);
+      return stored || DEFAULT_CAT_COLOR;
+    }
+    return DEFAULT_CAT_COLOR;
+  });
+  
+  // 鼠标位置跟踪（用于猫咪眼睛跟随）
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
   // 计算成长阶段
   const growthStage = getGrowthStage(totalHours);
+  
+  // 根据主题获取阶段名称
+  const displayStageName = themeType === 'cat' 
+    ? STAGE_NAME_MAP[growthStage.stageName] || growthStage.stageName
+    : growthStage.stageName;
+  
+  // 监听 localStorage 变化（当用户在激励页面切换主题时）
+  useEffect(() => {
+    const handleStorageChange = () => {
+      if (typeof window !== 'undefined') {
+        const storedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+        const storedColor = localStorage.getItem(CAT_COLOR_STORAGE_KEY);
+        if (storedTheme === 'tree' || storedTheme === 'cat') {
+          setThemeType(storedTheme);
+        }
+        if (storedColor) {
+          setCatColor(storedColor);
+        }
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    // 也监听自定义事件（同页面内的变化）
+    const interval = setInterval(handleStorageChange, 500);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
+  }, []);
+  
+  // 鼠标位置跟踪（仅在猫咪模式下）
+  useEffect(() => {
+    if (themeType !== 'cat') return;
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      setMousePos({ x: e.clientX, y: e.clientY });
+    };
+    
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, [themeType]);
 
   // 实时更新本次学习时长和积分
   useEffect(() => {
@@ -144,13 +223,25 @@ export function FlowRewardDisplay({ sessionStartTime, stats, totalHours }: FlowR
 
   return (
     <div className="w-full flex flex-col items-center gap-2 shrink-0">
-      {/* 小树苗区域 */}
+      {/* 激励形象区域 */}
       <div className="w-full flex flex-col items-center gap-1 shrink-0">
         <div className="relative w-16 h-16 flex items-center justify-center overflow-hidden">
-          <IncentiveVisual stage={growthStage.stage} progress={growthStage.progress} />
+          {themeType === 'cat' ? (
+            <CatVisual 
+              stage={growthStage.stage} 
+              progress={growthStage.progress}
+              primaryColor={catColor}
+              mousePos={mousePos}
+            />
+          ) : (
+            <IncentiveVisual 
+              stage={growthStage.stage} 
+              progress={growthStage.progress} 
+            />
+          )}
         </div>
         <div className="text-[10px] font-medium text-white/80 px-2 py-0.5 bg-indigo-500/20 rounded-full border border-indigo-500/30">
-          {growthStage.stageName}
+          {displayStageName}
         </div>
       </div>
 

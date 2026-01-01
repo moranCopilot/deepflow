@@ -5,6 +5,8 @@
 
 const STORAGE_KEY = 'deepflow_reward_data';
 const MAX_SESSIONS = 100; // 保留最近100条会话记录
+const DEFAULT_BASELINE_HOURS = 22.5; // 激励体系默认展示的专注时长（小时）
+const BASELINE_SECONDS = Math.round(DEFAULT_BASELINE_HOURS * 3600);
 
 export interface LearningSession {
   id: string;
@@ -53,13 +55,75 @@ export class RewardManager {
    */
   private getInitialData(): RewardData {
     return {
-      totalDuration: 0,
+      totalDuration: BASELINE_SECONDS,
       totalSessions: 0,
       interruptedSessions: 0,
       totalDistractions: 0,
       totalPoints: 0,
       sessions: []
     };
+  }
+
+  private normalizeStoredData(raw: RewardData): { data: RewardData; changed: boolean } {
+    let changed = false;
+    const data: RewardData = {
+      ...raw,
+      sessions: Array.isArray(raw.sessions) ? raw.sessions.map((s) => ({ ...s })) : [],
+    };
+
+    // 兼容早期错误：duration/totalDuration 可能以毫秒存储
+    const looksLikeMillis = data.sessions.some((session) => {
+      if (!session?.endTime || typeof session.startTime !== 'number') return false;
+      const diffMs = session.endTime - session.startTime;
+      if (diffMs <= 0) return false;
+      return session.duration / diffMs > 0.1;
+    });
+
+    if (looksLikeMillis) {
+      changed = true;
+      data.sessions = data.sessions.map((session) => {
+        if (!session?.endTime || typeof session.startTime !== 'number') return session;
+        const durationSeconds = Math.max(0, Math.floor((session.endTime - session.startTime) / 1000));
+        const points = this.calculatePoints(durationSeconds, session.isInterrupted);
+        return { ...session, duration: durationSeconds, points };
+      });
+
+      // 如果总次数和记录数一致，直接基于 sessions 重算聚合字段，避免旧数据继续放大
+      if (data.totalSessions === data.sessions.length) {
+        const totals = data.sessions.reduce(
+          (acc, session) => {
+            acc.totalDuration += session.duration;
+            acc.totalSessions += 1;
+            if (session.isInterrupted) acc.interruptedSessions += 1;
+            acc.totalDistractions += session.distractionCount || 0;
+            acc.totalPoints += session.points || 0;
+            return acc;
+          },
+          {
+            totalDuration: 0,
+            totalSessions: 0,
+            interruptedSessions: 0,
+            totalDistractions: 0,
+            totalPoints: 0,
+          }
+        );
+        data.totalDuration = totals.totalDuration;
+        data.totalSessions = totals.totalSessions;
+        data.interruptedSessions = totals.interruptedSessions;
+        data.totalDistractions = totals.totalDistractions;
+        data.totalPoints = totals.totalPoints;
+      } else {
+        data.totalDuration = Math.max(0, Math.floor(data.totalDuration / 1000));
+      }
+    }
+
+    // 默认展示 baseline：确保总时长至少为 22.5h（避免只显示几分钟）
+    if (data.totalDuration < BASELINE_SECONDS) {
+      data.totalDuration = BASELINE_SECONDS;
+      changed = true;
+    }
+
+    return { data, changed };
   }
 
   /**
@@ -76,7 +140,11 @@ export class RewardManager {
         const data = JSON.parse(stored) as RewardData;
         // 验证数据结构
         if (data && typeof data.totalDuration === 'number') {
-          return data;
+          const normalized = this.normalizeStoredData(data);
+          if (normalized.changed) {
+            this.saveData(normalized.data);
+          }
+          return normalized.data;
         }
       }
     } catch (error) {
@@ -151,14 +219,14 @@ export class RewardManager {
     isInterrupted: boolean,
     distractionCount: number = 0
   ): LearningSession {
-    const duration = Math.max(0, endTime - startTime);
-    const points = this.calculatePoints(duration, isInterrupted);
+    const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
+    const points = this.calculatePoints(durationSeconds, isInterrupted);
 
     const session: LearningSession = {
       id: sessionId,
       startTime,
       endTime,
-      duration,
+      duration: durationSeconds,
       isInterrupted,
       distractionCount,
       points
@@ -167,7 +235,7 @@ export class RewardManager {
     const data = this.getStoredData();
     
     // 更新统计数据
-    data.totalDuration += duration;
+    data.totalDuration += durationSeconds;
     data.totalSessions += 1;
     if (isInterrupted) {
       data.interruptedSessions += 1;
@@ -225,4 +293,3 @@ export class RewardManager {
 
 // 导出单例
 export const rewardManager = new RewardManager();
-
