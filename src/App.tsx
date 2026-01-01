@@ -5,7 +5,7 @@ import { HeadsetDevice } from './components/HeadsetDevice';
 import { PrinterDevice } from './components/PrinterDevice';
 import { GlassesDevice } from './components/GlassesDevice';
 import { SceneBackground } from './components/SceneBackground';
-import { Headphones, Printer, Glasses, Presentation, type LucideIcon } from 'lucide-react';
+import { Headphones, Printer, Glasses, Presentation, Download, type LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { type SceneTag, SCENE_CONFIGS } from './config/scene-config';
 import { getApiUrl } from './utils/api-config';
@@ -417,15 +417,27 @@ function App() {
             <p className="text-sm text-neutral-500 mt-2 font-mono tracking-wide">MULTIMODAL HARDWARE INTERFACE</p>
           </div>
           
-          <a 
-            href="https://gamma.app/docs/DeepFlow-Station-2wwpdsu2agcl1km" 
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-neutral-50 rounded-full border border-neutral-200 shadow-sm hover:shadow transition-all group"
-          >
-            <Presentation size={18} className="text-neutral-500 group-hover:text-indigo-600 transition-colors" />
-            <span className="text-sm font-medium text-neutral-600 group-hover:text-neutral-900">项目说明书</span>
-          </a>
+          <div className="flex items-center gap-3">
+            <a 
+              href="https://pan.quark.cn/s/76d86a29168c" 
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-neutral-50 rounded-full border border-neutral-200 shadow-sm hover:shadow transition-all group"
+            >
+              <Download size={18} className="text-neutral-500 group-hover:text-indigo-600 transition-colors" />
+              <span className="text-sm font-medium text-neutral-600 group-hover:text-neutral-900">下载文件体验包</span>
+            </a>
+            
+            <a 
+              href="https://gamma.app/docs/DeepFlow-Station-2wwpdsu2agcl1km" 
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-neutral-50 rounded-full border border-neutral-200 shadow-sm hover:shadow transition-all group"
+            >
+              <Presentation size={18} className="text-neutral-500 group-hover:text-indigo-600 transition-colors" />
+              <span className="text-sm font-medium text-neutral-600 group-hover:text-neutral-900">项目说明书</span>
+            </a>
+          </div>
         </header>
 
         <div className="flex flex-col xl:flex-row gap-12 items-start justify-center">

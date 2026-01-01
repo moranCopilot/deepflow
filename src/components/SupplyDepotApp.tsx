@@ -11,7 +11,7 @@ import Hls from 'hls.js';
 import { type SceneTag, SCENE_CONFIGS } from '../config/scene-config';
 import { SceneWheel } from './SceneWheel';
 import { RewardSystem } from './RewardSystem';
-import { RewardDisplay } from './RewardDisplay';
+import { FlowRewardDisplay } from './FlowRewardDisplay';
 import { useRewardSystem } from '../hooks/useRewardSystem';
 
 export interface KnowledgeCard {
@@ -3107,25 +3107,25 @@ export function SupplyDepotApp({
     const hasNoAudioForScene = playableItemsForCurrentScene.length === 0;
 
     return (
-      <div className="h-full flex flex-col items-center justify-between bg-black text-white p-6 relative overflow-hidden">
+      <div className="h-full flex flex-col items-center bg-black text-white p-4 sm:p-6 relative overflow-hidden">
         {renderAudioPlayer()}
         <div className="absolute inset-0 bg-gradient-to-br from-indigo-900 via-black to-black opacity-80" />
         
-        {/* Top Spacer to balance layout */}
-        <div className="flex-1 min-h-[10%]" />
+        {/* Top Spacer */}
+        <div className="flex-shrink-0 h-8" />
 
         {/* Middle Section: Logo, Playing Info & Scene Switcher */}
-        <div className="relative z-10 flex flex-col items-center justify-center w-full max-w-md shrink-0">
+        <div className="relative z-10 flex flex-col items-center justify-center w-full max-w-md flex-1 min-h-0 py-4">
             {/* Logo */}
-            <div className="flex flex-col items-center mb-6">
-                <div className="w-16 h-16 rounded-full bg-indigo-500/20 flex items-center justify-center mb-3 ring-1 ring-indigo-500/30">
-                    <Brain className="w-8 h-8 text-indigo-400" />
+            <div className="flex flex-col items-center mb-4">
+                <div className="w-14 h-14 rounded-full bg-indigo-500/20 flex items-center justify-center mb-2 ring-1 ring-indigo-500/30">
+                    <Brain className="w-7 h-7 text-indigo-400" />
                 </div>
-                <h2 className="text-xl font-light tracking-tight mb-1">DeepFlow</h2>
+                <h2 className="text-lg font-light tracking-tight">DeepFlow</h2>
             </div>
 
             {/* Now Playing Title - Compact & Near Wheel */}
-            <div className="w-full px-4 mb-8 min-h-[3rem] flex items-center justify-center">
+            <div className="w-full px-4 mb-6 min-h-[2.5rem] flex items-center justify-center">
                  <AnimatePresence mode="wait">
                     {currentPlayingItem ? (
                         <motion.div
@@ -3135,7 +3135,7 @@ export function SupplyDepotApp({
                             exit={{ opacity: 0, y: -5 }}
                             className="text-center"
                         >
-                            <h3 className="text-lg font-semibold text-white/90 line-clamp-2 leading-snug drop-shadow-md">
+                            <h3 className="text-base font-semibold text-white/90 line-clamp-2 leading-snug drop-shadow-md">
                                 {currentPlayingItem.title}
                             </h3>
                         </motion.div>
@@ -3161,11 +3161,12 @@ export function SupplyDepotApp({
         </div>
 
         {/* Bottom Section: Reward Display & End Button */}
-        <div className="relative z-10 w-full max-w-md flex flex-col justify-end items-center flex-1 pb-8 min-h-[20%] gap-4">
+        <div className="relative z-10 w-full max-w-md flex-shrink-0 flex flex-col items-center gap-2.5 pb-2">
             {/* 激励显示 */}
-            <RewardDisplay 
+            <FlowRewardDisplay 
               sessionStartTime={rewardSystem.sessionStartTime}
-              isInterrupted={false}
+              stats={rewardSystem.stats}
+              totalHours={rewardSystem.totalHours}
             />
             
             <button 
@@ -3178,7 +3179,7 @@ export function SupplyDepotApp({
                   }
                   onStopFlow();
                 }}
-                className="px-8 py-3 rounded-full bg-white/10 border border-white/20 text-white/80 text-sm font-medium hover:bg-white/20 transition-colors backdrop-blur-md"
+                className="px-8 py-2.5 rounded-full bg-white/10 border border-white/20 text-white/80 text-sm font-medium hover:bg-white/20 transition-colors backdrop-blur-md shrink-0"
             >
                 结束会话
             </button>
