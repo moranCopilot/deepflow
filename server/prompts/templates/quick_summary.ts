@@ -38,7 +38,7 @@ export const quickSummaryPrompt: PromptTemplate = {
 
     Output STRICT JSON format with the following structure:
     {
-      "title": "速听精华：[文档标题]",
+      "title": "[文档标题]",
       "summary": "一句话概括本期速听精华的核心内容。",
       "knowledgeCards": [
         {

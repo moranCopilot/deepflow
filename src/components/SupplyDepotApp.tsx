@@ -162,7 +162,6 @@ export function SupplyDepotApp({
   const [gardenTab, setGardenTab] = useState<'cards' | 'files' | 'cache'>('cards');
   const [cacheStats, setCacheStats] = useState<{ files: number; audio: number; metadata: number } | null>(null);
   const [selectedItem, setSelectedItem] = useState<FlowItem | null>(null);
-  const [filterPreset, setFilterPreset] = useState('all');
   const [showInputPanel, setShowInputPanel] = useState(false);
   const [isGardenOpen, setIsGardenOpen] = useState(false);
   const [isRewardSystemOpen, setIsRewardSystemOpen] = useState(false);
@@ -246,12 +245,8 @@ export function SupplyDepotApp({
     return 'default';
   };
 
-  // 文件名前缀映射
-  const prefixMap: Record<string, string> = {
-    'history': '回家路上：',
-    'math_geometry': '静坐专注：',
-    'language': '问答式记忆：'
-  };
+  // 文件名前缀映射已移除，item 标签承载了场景含义
+
 
   // 预生成 FlowItem 定义（带生成状态）
   const getDefaultFlowItems = (): FlowItem[] => [
@@ -311,7 +306,7 @@ export function SupplyDepotApp({
     },
     {
       id: 'default-3',
-      title: '在家充电：科技时事',
+      title: '科技时事',
       duration: '15:00',
       type: 'tech',
       tldr: '了解最新科技动态',
@@ -2746,39 +2741,8 @@ export function SupplyDepotApp({
         const summary = data.summary || '';
         const originalTitle = data.title || 'AI 深度分析';
         
-        // 先根据标题和摘要推断场景标签（用于决定是否需要添加前缀）
-        const inferredSceneTag = getSceneTagFromTitle(originalTitle, contentCategory, backendSceneTag, summary);
-        
-        // 根据内容类型或推断的场景标签添加文件名前缀
+        // 不需要再添加前缀，item 的标签已经承载了场景含义
         let finalTitle = originalTitle;
-        if (contentCategory && prefixMap[contentCategory]) {
-          // 如果已经有前缀，不再添加
-          if (!finalTitle.startsWith('回家路上：') && 
-              !finalTitle.startsWith('静坐专注：') && 
-              !finalTitle.startsWith('问答式记忆：') && 
-              !finalTitle.startsWith('在家充电：')) {
-            finalTitle = prefixMap[contentCategory] + finalTitle;
-          }
-        } else if (inferredSceneTag === 'qa_memory' && !finalTitle.startsWith('问答式记忆：')) {
-          // 如果推断为问答式记忆，但标题中没有前缀，检查是否需要添加
-          const textToCheck = `${originalTitle} ${summary}`.toLowerCase();
-          const qaMemoryKeywords = ['语文', '古诗', '诗文', '诗词', '文言文', 'english', '英语'];
-          if (qaMemoryKeywords.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
-            finalTitle = '问答式记忆：' + finalTitle;
-          }
-        } else if (inferredSceneTag === 'commute' && !finalTitle.startsWith('回家路上：')) {
-          const textToCheck = `${originalTitle} ${summary}`.toLowerCase();
-          const historyKeywords = ['历史', 'history', '古代', '朝代'];
-          if (historyKeywords.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
-            finalTitle = '回家路上：' + finalTitle;
-          }
-        } else if (inferredSceneTag === 'focus' && !finalTitle.startsWith('静坐专注：')) {
-          const textToCheck = `${originalTitle} ${summary}`.toLowerCase();
-          const mathKeywords = ['数学', '几何', 'math', 'geometry', '物理', 'physics', '力学', '电磁', '热学', '光学', '原子'];
-          if (mathKeywords.some(keyword => textToCheck.includes(keyword.toLowerCase()))) {
-            finalTitle = '静坐专注：' + finalTitle;
-          }
-        }
         
         // 获取最终场景标签（使用更新后的标题）
         const sceneTag = getSceneTagFromTitle(finalTitle, contentCategory, backendSceneTag, summary);
@@ -3508,34 +3472,7 @@ export function SupplyDepotApp({
           <div className="flex flex-col gap-4 p-5 pb-2">
             <h3 className="text-xl font-bold text-slate-900 tracking-tight">FlowList</h3>
             
-            {/* 筛选器 */}
-            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar -mx-1 px-1">
-              <button
-                  onClick={() => setFilterPreset('all')}
-                  className={clsx(
-                      "px-4 py-1.5 rounded-full text-xs font-semibold transition-all border whitespace-nowrap",
-                      filterPreset === 'all'
-                          ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-200"
-                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300"
-                  )}
-              >
-                  全部
-              </button>
-              {Object.entries(PRESETS).map(([key, preset]) => (
-                  <button
-                      key={key}
-                      onClick={() => setFilterPreset(key)}
-                      className={clsx(
-                          "px-4 py-1.5 rounded-full text-xs font-semibold transition-all border whitespace-nowrap",
-                          filterPreset === key
-                              ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-200"
-                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300"
-                      )}
-                  >
-                      {preset.label}
-                  </button>
-              ))}
-            </div>
+            {/* 筛选器已移除 */}
           </div>
 
           {/* FlowItem 列表 */}
@@ -3560,22 +3497,7 @@ export function SupplyDepotApp({
                   // 生成中的 items 始终显示
                   if (item.isGenerating) return true;
                   
-                  if (filterPreset === 'all') return true;
-                  
-                  const preset = PRESETS[filterPreset];
-                  if (!preset) return true;
-
-                  // Check Mode
-                  if (item.mode !== preset.mode) return false;
-                  // Check Type
-                  if (item.contentType !== preset.type) return false;
-                  
-                  // Check Duration
-                  const mins = parseInt(item.duration.split(':')[0]);
-                  if (preset.duration === 'short' && mins >= 5) return false;
-                  if (preset.duration === 'medium' && (mins < 5 || mins > 15)) return false;
-                  if (preset.duration === 'long' && mins <= 15) return false;
-
+                  // 筛选逻辑已移除，显示所有项目
                   return true;
                 }).map((item) => {
                   const sceneTag = item.sceneTag || 'default';
@@ -3629,7 +3551,7 @@ export function SupplyDepotApp({
                                     ? "text-indigo-900" 
                                     : "text-slate-800 group-hover:text-slate-900"
                             )}>
-                                {item.title}
+                                {item.title.replace(/^(速听精华：|深度剖析：|提问练习：|回家路上：|静坐专注：|问答式记忆：)/, '')}
                             </span>
                             
                             {/* 生成中状态或 Subtitle / TLDR */}
@@ -3734,7 +3656,7 @@ export function SupplyDepotApp({
                       
                       {/* Title Section */}
                       <div className="pb-6 px-4">
-                          <h2 className="font-bold text-lg leading-tight mb-2">{selectedItem.title}</h2>
+                          <h2 className="font-bold text-lg leading-tight mb-2">{selectedItem.title.replace(/^(速听精华：|深度剖析：|提问练习：|回家路上：|静坐专注：|问答式记忆：)/, '')}</h2>
                       </div>
                       
                       {/* Bottom Section: Player Controls */}

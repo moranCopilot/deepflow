@@ -46,7 +46,7 @@ export const deepAnalysisPrompt: PromptTemplate = {
 
     Output STRICT JSON format with the following structure:
     {
-      "title": "深度剖析：[文档标题]",
+      "title": "[文档标题]",
       "summary": "本期深度剖析的核心内容概览。",
       "knowledgeCards": [
         {

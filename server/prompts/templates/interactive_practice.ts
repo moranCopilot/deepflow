@@ -44,7 +44,7 @@ export const interactivePracticePrompt: PromptTemplate = {
 
     Output STRICT JSON format with the following structure:
     {
-      "title": "提问练习：[文档标题]",
+      "title": "[文档标题]",
       "summary": "本期练习的重点范围说明。",
       "knowledgeCards": [
         {
