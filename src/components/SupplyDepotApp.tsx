@@ -3419,7 +3419,7 @@ export function SupplyDepotApp({
                 <div className="w-10 h-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center">
                     <FileText size={20} />
                 </div>
-                <span className="text-[10px] font-medium text-slate-600">导入</span>
+                <span className="text-[10px] font-medium text-slate-600">文件</span>
             </button>
             <button onClick={() => addRawInput('录音')} className="flex flex-col items-center gap-2 p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 transition-colors active:scale-95">
                 <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">

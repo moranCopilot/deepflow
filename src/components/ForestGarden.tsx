@@ -100,9 +100,9 @@ export function ForestGarden({ totalHours, debugMode = false, onStageChange }: F
   }, [debugMode]);
   
   return (
-    <div className="flex flex-col items-center gap-4 py-6">
+    <div className="flex flex-col items-center gap-3 py-4">
       {/* 森林视觉 */}
-      <div className="relative flex items-center justify-center min-h-[300px] w-full overflow-hidden bg-gradient-to-b from-blue-50/30 to-white/0 rounded-3xl border border-slate-100/50 shadow-inner">
+      <div className="relative flex items-center justify-center min-h-[260px] w-full overflow-hidden bg-gradient-to-b from-blue-50/30 to-white/0 rounded-3xl border border-slate-100/50 shadow-inner">
         <IncentiveVisual stage={growthStage.stage} progress={growthStage.progress} />
       </div>
       
@@ -118,7 +118,7 @@ export function ForestGarden({ totalHours, debugMode = false, onStageChange }: F
         </div>
         
         {debugMode && (
-          <div className="flex items-center justify-center gap-2 mt-2">
+          <div className="flex items-center justify-center gap-2 mt-1">
             <button 
                 onClick={() => setDebugStage(Math.max(0, debugStage - 1))}
                 className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 rounded"
