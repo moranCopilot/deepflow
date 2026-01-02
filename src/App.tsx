@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { PhoneFrame } from './components/PhoneFrame';
 import { SupplyDepotApp, type KnowledgeCard, type FlowPlaybackState } from './components/SupplyDepotApp';
 import { HeadsetDevice } from './components/HeadsetDevice';
@@ -7,7 +7,7 @@ import { GlassesDevice } from './components/GlassesDevice';
 import { SceneBackground } from './components/SceneBackground';
 import { Headphones, Printer, Glasses, Presentation, Download, type LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
-import { type SceneTag, SCENE_CONFIGS } from './config/scene-config';
+import { type SceneTag, SCENE_CONFIGS, SLOT_DEFINITIONS, type SlotId } from './config/scene-config';
 import { getApiUrl } from './utils/api-config';
 import { useSceneBackground } from './hooks/useSceneBackground';
 
@@ -82,17 +82,36 @@ function App() {
   const [capturedFile, setCapturedFile] = useState<File | null>(null);
   const [uploadedAudioFile, setUploadedAudioFile] = useState<File | null>(null);
   const [captureIndex, setCaptureIndex] = useState(0);
-  const [availableScenes, setAvailableScenes] = useState<SceneTag[]>([]);
+  const [availableSlots, setAvailableSlots] = useState<SlotId[]>([]);
   const [environmentCycleIndex, setEnvironmentCycleIndex] = useState<number>(-1);
+  const [environmentSwitchToken, setEnvironmentSwitchToken] = useState<number>(0);
   
   // Scene background management
   const sceneBackground = useSceneBackground(currentSceneTag);
   
-  // 环境循环逻辑：过滤出有背景效果的场景
-  const scenesWithBackground = availableScenes.filter(sceneTag => {
-    const config = SCENE_CONFIGS[sceneTag];
-    return config.backgroundEffect !== null;
-  });
+  const slotIdsByScene = useMemo(() => {
+    const availableSet = new Set(availableSlots);
+    const map = new Map<SceneTag, SlotId[]>();
+    SLOT_DEFINITIONS.forEach((slot) => {
+      if (!slot.environmentSceneTag) return;
+      if (!availableSet.has(slot.id)) return;
+      const list = map.get(slot.environmentSceneTag) || [];
+      list.push(slot.id);
+      map.set(slot.environmentSceneTag, list);
+    });
+    return map;
+  }, [availableSlots]);
+
+  const ENV_SCENE_ORDER: SceneTag[] = ['commute', 'focus', 'sleep_meditation', 'qa_memory', 'daily_review'];
+
+  // 环境循环逻辑：基于槽位可播放能力决定场景，避免 sceneTag 不一致导致缺失
+  const scenesWithBackground = useMemo(() => {
+    return ENV_SCENE_ORDER.filter(sceneTag => {
+      const config = SCENE_CONFIGS[sceneTag];
+      const slotsForScene = slotIdsByScene.get(sceneTag);
+      return config.backgroundEffect !== null && slotsForScene && slotsForScene.length > 0;
+    });
+  }, [slotIdsByScene]);
   
   // 环境按钮点击处理
   const handleEnvironmentButtonClick = () => {
@@ -100,58 +119,42 @@ function App() {
     
     const nextIndex = (environmentCycleIndex + 1) % (scenesWithBackground.length + 1);
     
-    if (nextIndex === 0) {
-      // 第一次点击：激活第一个环境
-      const targetScene = scenesWithBackground[0];
-      setEnvironmentCycleIndex(0);
-      setCurrentSceneTag(targetScene);
-      
-      // 立即激活背景效果（不等待 useEffect）
-      const config = SCENE_CONFIGS[targetScene];
-      if (config.backgroundEffect) {
-        sceneBackground.activate();
-      }
-      
-      // 播放提示音频
-      if (config.audioPrompt) {
-        const audio = new Audio(config.audioPrompt);
-        audio.play().catch(console.error);
-      }
-      
-      startFlow(); // 进入 FlowList 模式，SupplyDepotApp 会自动播放
-    } else if (nextIndex < scenesWithBackground.length) {
-      // 后续点击：切换到下一个环境
-      const targetScene = scenesWithBackground[nextIndex];
-      setEnvironmentCycleIndex(nextIndex);
-      setCurrentSceneTag(targetScene);
-      
-      // 立即激活背景效果（不等待 useEffect）
-      const config = SCENE_CONFIGS[targetScene];
-      if (config.backgroundEffect) {
-        sceneBackground.activate();
-      }
-      
-      // 播放提示音频
-      if (config.audioPrompt) {
-        const audio = new Audio(config.audioPrompt);
-        audio.play().catch(console.error);
-      }
-      
-      // 如果已经在 FlowList 模式，切换场景后会自动播放
-      if (!isFlowing) {
-        startFlow();
-      }
-    } else {
+    if (nextIndex === scenesWithBackground.length) {
       // 最后一次点击：关闭环境
       setEnvironmentCycleIndex(-1);
       sceneBackground.deactivate();
-      // 不停止 Flow，只是关闭背景效果（通过 activeEnvironmentScene 变为 null 来实现）
+      return;
+    }
+    
+    const targetScene = scenesWithBackground[nextIndex];
+    setEnvironmentCycleIndex(nextIndex);
+    setEnvironmentSwitchToken(Date.now());
+    setCurrentSceneTag(targetScene);
+    
+    // 立即激活背景效果（不等待 useEffect）
+    const config = SCENE_CONFIGS[targetScene];
+    if (config.backgroundEffect) {
+      sceneBackground.activate();
+    }
+    
+    // 播放提示音频
+    if (config.audioPrompt) {
+      const audio = new Audio(config.audioPrompt);
+      audio.play().catch(console.error);
+    }
+    
+    // 如果已经在 FlowList 模式，切换场景后会自动播放
+    if (!isFlowing) {
+      startFlow();
     }
   };
   
   // 当前激活的环境场景
   const activeEnvironmentScene = environmentCycleIndex >= 0 && environmentCycleIndex < scenesWithBackground.length
     ? scenesWithBackground[environmentCycleIndex]
+    : null;
+  const activeEnvironmentSlotId = activeEnvironmentScene
+    ? slotIdsByScene.get(activeEnvironmentScene)?.[0] || null
     : null;
   
   // 环境按钮是否应该显示：只要有背景效果的场景有可播放音频就显示
@@ -453,12 +456,14 @@ function App() {
                       onUpdateKnowledgeCards={setKnowledgeCards}
                       currentSceneTag={currentSceneTag}
                       onSceneChange={setCurrentSceneTag}
+                      environmentSwitchToken={environmentSwitchToken}
+                      environmentSlotId={activeEnvironmentSlotId}
                       onPlaybackStateChange={setPlaybackState}
                       onPrintTrigger={handlePrintTrigger}
                       onTranscription={setTranscription}
                       externalInputFile={capturedFile}
                       externalAudioFile={uploadedAudioFile}
-                      onAvailableScenesChange={setAvailableScenes}
+                      onAvailableSlotsChange={setAvailableSlots}
                   />
               </PhoneFrame>
               <div className="flex flex-col items-center gap-1">

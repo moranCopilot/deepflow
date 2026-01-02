@@ -8,7 +8,7 @@ import { getApiUrl } from '../utils/api-config';
 import { cacheManager } from '../utils/cache-manager';
 import { generateFileHash, generateScriptHash } from '../utils/file-utils';
 import Hls from 'hls.js';
-import { type SceneTag, SCENE_CONFIGS } from '../config/scene-config';
+import { type SceneTag, SCENE_CONFIGS, SLOT_DEFINITIONS, type SlotDefinition, type SlotId, type FormType } from '../config/scene-config';
 import { SceneWheel } from './SceneWheel';
 import { FlowRewardDisplay } from './FlowRewardDisplay';
 import { useRewardSystem } from '../hooks/useRewardSystem';
@@ -29,6 +29,11 @@ export interface KnowledgeCard {
     triggerSubtitleIndex?: number; // 关联的字幕索引
     source?: 'generated' | 'ai_realtime'; // 来源标识
 }
+
+type ContentCategory = {
+  main?: string;
+  aux?: string[];
+};
 
 interface RawInput {
     id: string;
@@ -53,6 +58,9 @@ export interface FlowItem {
     script?: { speaker: string; text: string }[];
     knowledgeCards?: KnowledgeCard[];
     sceneTag?: SceneTag;
+    contentCategory?: ContentCategory;
+    formType?: FormType;
+    slotId?: SlotId;
     playbackProgress?: {
         startedAt?: number;
         lastPlayedAt?: number;
@@ -86,7 +94,9 @@ interface SupplyDepotAppProps {
   environmentSwitchToken?: number;
   environmentIntroToken?: number;
   environmentIntroEndsAt?: number;
+  environmentSlotId?: SlotId | null;
   onAvailableScenesChange?: (scenes: SceneTag[]) => void;
+  onAvailableSlotsChange?: (slots: SlotId[]) => void;
   onPlaybackStateChange?: (state: FlowPlaybackState) => void;
   onPrintTrigger?: (card: KnowledgeCard) => void;
   onTranscription?: (transcription: { source: 'input' | 'output'; text: string }) => void;
@@ -94,6 +104,151 @@ interface SupplyDepotAppProps {
   externalAudioFile?: File | null;
   onEnvironmentActivate?: (sceneTag: SceneTag) => void; // 环境激活回调，用于获取可播放项和播放方法
 }
+
+const SCIENCE_MAIN_CATEGORIES = new Set(['数学', '物理', '化学', '生物']);
+const SCIENCE_KEYWORDS = [
+  '数学',
+  '几何',
+  '代数',
+  '函数',
+  '概率',
+  '统计',
+  '物理',
+  '力学',
+  '电磁',
+  '光学',
+  '热学',
+  '化学',
+  '元素',
+  '反应',
+  '分子',
+  '生物',
+  '细胞',
+  '遗传',
+  '理科',
+  '数理化',
+  '理综',
+  '理工',
+  'science',
+  'stem',
+  'math',
+  'geometry',
+  'algebra',
+  'calculus',
+  'probability',
+  'statistics',
+  'physics',
+  'mechanics',
+  'electromagnetism',
+  'optics',
+  'thermodynamics',
+  'chemistry',
+  'element',
+  'molecule',
+  'biology',
+  'cell',
+  'genetics'
+];
+const LANGUAGE_KEYWORDS = [
+  '语文',
+  '英文',
+  '英语',
+  '外语',
+  '诗',
+  '诗词',
+  '文言文',
+  '文学',
+  '语法',
+  'language',
+  'english',
+  'literature',
+  'grammar'
+];
+const HISTORY_KEYWORDS = [
+  '历史',
+  '朝代',
+  '古代',
+  '史',
+  '政治',
+  'history',
+  'politics',
+  'civics'
+];
+const CATEGORY_SEPARATOR_REGEX = /[\s/|,，、;；&+·\-–—~]+/g;
+
+const ASSIGNABLE_SLOTS = SLOT_DEFINITIONS.filter((slot) => !slot.isFixedPush && !slot.isFallback);
+const DEFAULT_SLOT_ID: SlotId = SLOT_DEFINITIONS.find((slot) => slot.isFallback)?.id || 'default_slot';
+
+const normalizeContentCategory = (raw: unknown): ContentCategory => {
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const record = raw as { main?: unknown; aux?: unknown };
+    const main = typeof record.main === 'string' && record.main.trim() ? record.main.trim() : undefined;
+    const aux = Array.isArray(record.aux)
+      ? record.aux
+          .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+          .map((item) => item.trim())
+          .slice(0, 2)
+      : [];
+    return {
+      main: main || '其他',
+      aux
+    };
+  }
+
+  if (typeof raw === 'string' && raw.trim()) {
+    return { main: raw.trim(), aux: [] };
+  }
+
+  return { main: '其他', aux: [] };
+};
+
+const normalizeMainCategory = (contentCategory?: ContentCategory | string): string | undefined => {
+  if (!contentCategory) return undefined;
+  if (typeof contentCategory === 'string') return contentCategory.trim();
+  return contentCategory.main?.trim();
+};
+
+const sanitizeJsonString = (value: string): string => value.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+
+const normalizeCategoryValue = (value: string): string => value.toLowerCase().replace(CATEGORY_SEPARATOR_REGEX, '');
+
+const containsKeyword = (value: string | undefined, keywords: string[]): boolean => {
+  if (!value) return false;
+  const normalized = normalizeCategoryValue(value);
+  return keywords.some(keyword => normalized.includes(normalizeCategoryValue(keyword)));
+};
+
+const isScienceCategory = (value?: string): boolean => {
+  if (!value) return false;
+  if (SCIENCE_MAIN_CATEGORIES.has(value.trim())) return true;
+  return containsKeyword(value, SCIENCE_KEYWORDS);
+};
+
+const isLanguageCategory = (value?: string): boolean => containsKeyword(value, LANGUAGE_KEYWORDS);
+const isHistoryCategory = (value?: string): boolean => containsKeyword(value, HISTORY_KEYWORDS);
+
+const getSubjectType = (mainCategory?: string, aux?: string[]): 'science' | 'arts' => {
+  const candidates = [mainCategory, ...(aux || [])].filter((value): value is string => Boolean(value));
+  if (candidates.some(value => isScienceCategory(value))) return 'science';
+  return 'arts';
+};
+
+const deriveFormType = (item: FlowItem): FormType => {
+  if (item.formType) return item.formType;
+  if (item.contentType === 'interactive') return '对话';
+  if (item.contentType === 'discussion') return '深度';
+  return '速听';
+};
+
+const matchesAssignableSlot = (slot: SlotDefinition, item: FlowItem): boolean => {
+  const formType = deriveFormType(item);
+  if (!slot.formRules.includes(formType)) return false;
+  if (slot.contentRule === 'any') return true;
+  const subjectType = getSubjectType(item.contentCategory?.main, item.contentCategory?.aux);
+  if (slot.contentRule === 'science') return subjectType === 'science';
+  if (slot.contentRule === 'arts') return subjectType === 'arts';
+  return false;
+};
 
 export function SupplyDepotApp({ 
   onStartFlow, 
@@ -106,7 +261,9 @@ export function SupplyDepotApp({
   environmentSwitchToken,
   environmentIntroToken,
   environmentIntroEndsAt,
+  environmentSlotId,
   onAvailableScenesChange,
+  onAvailableSlotsChange,
   onPlaybackStateChange,
   onPrintTrigger,
   onTranscription,
@@ -117,6 +274,8 @@ export function SupplyDepotApp({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentInputType, setCurrentInputType] = useState<string>('');
+  const defaultCompletionTimersRef = useRef<number[]>([]);
+  const defaultCompletionScheduledRef = useRef(false);
 
   // Handle external input file
   useEffect(() => {
@@ -187,8 +346,26 @@ export function SupplyDepotApp({
     }
 
     setCommunityDetailListId(list.id);
-    setFlowItems(list.items);
-    setSelectedItem(list.items[0]);
+    const slotCountMap = new Map<SlotId, number>();
+    const getSlotCount = (slotId: SlotId): number => slotCountMap.get(slotId) ?? 0;
+    const bumpSlotCount = (slotId: SlotId) => slotCountMap.set(slotId, getSlotCount(slotId) + 1);
+
+    const normalizedItems = list.items.map((item) => {
+      const preparedItem = prepareFlowItem(item);
+      if (preparedItem.slotId) {
+        bumpSlotCount(preparedItem.slotId);
+        return preparedItem;
+      }
+
+      const slotId = selectSlotForItem(preparedItem, getSlotCount);
+      bumpSlotCount(slotId);
+      return {
+        ...preparedItem,
+        slotId
+      };
+    });
+    setFlowItems(normalizedItems);
+    setSelectedItem(normalizedItems[0]);
     onStartFlow();
   };
   
@@ -202,6 +379,23 @@ export function SupplyDepotApp({
         setReadyToFlow(false);
     }
   }, [flowItems, readyToFlow]);
+
+  useEffect(() => {
+    const hasPendingDefaults = flowItems.some(
+      item => item.id.startsWith('default-') && item.isGenerating
+    );
+
+    if (!hasPendingDefaults) {
+      defaultCompletionScheduledRef.current = false;
+      defaultCompletionTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      defaultCompletionTimersRef.current = [];
+      return;
+    }
+
+    if (!defaultCompletionScheduledRef.current) {
+      scheduleDefaultItemsCompletion();
+    }
+  }, [flowItems]);
 
   // 今日复盘相关状态
   // const [hasTriggeredReview, setHasTriggeredReview] = useState(false);
@@ -224,8 +418,71 @@ export function SupplyDepotApp({
   // 场景标签体系定义 (Moved to config/scene-config.tsx)
 
 
+  const getFormTypeFromPreset = (preset?: string): FormType => {
+    if (preset === 'quick_summary') return '速听';
+    if (preset === 'deep_analysis') return '深度';
+    if (preset === 'interactive_practice') return '对话';
+    return '速听';
+  };
+
+  const getSlotItemCount = (slotId: SlotId): number =>
+    flowItems.reduce((count, item) => {
+      const itemSlotId = item.slotId ?? DEFAULT_SLOT_ID;
+      return itemSlotId === slotId ? count + 1 : count;
+    }, 0);
+
+  const selectSlotForItem = (item: FlowItem, getSlotCount: (slotId: SlotId) => number): SlotId => {
+    const matchingSlots = ASSIGNABLE_SLOTS.filter((slot) => matchesAssignableSlot(slot, item));
+
+    if (matchingSlots.length === 0) {
+      return DEFAULT_SLOT_ID;
+    }
+
+    let selectedSlot = matchingSlots[0];
+    let minCount = getSlotCount(selectedSlot.id);
+
+    for (let index = 1; index < matchingSlots.length; index += 1) {
+      const candidate = matchingSlots[index];
+      const candidateCount = getSlotCount(candidate.id);
+      if (candidateCount < minCount) {
+        selectedSlot = candidate;
+        minCount = candidateCount;
+      }
+    }
+
+    return selectedSlot.id;
+  };
+
+  const assignSlotIdForItem = (item: FlowItem): SlotId => {
+    if (item.slotId) return item.slotId;
+    return selectSlotForItem(item, getSlotItemCount);
+  };
+
+  const prepareFlowItem = (item: FlowItem, options?: { assignSlot?: boolean }): FlowItem => {
+    const nextContentCategory = normalizeContentCategory(item.contentCategory);
+    const nextFormType = item.formType ?? deriveFormType(item);
+    let nextItem = item;
+
+    if (item.contentCategory !== nextContentCategory || item.formType !== nextFormType) {
+      nextItem = {
+        ...nextItem,
+        contentCategory: nextContentCategory,
+        formType: nextFormType
+      };
+    }
+
+    if (options?.assignSlot && !nextItem.slotId) {
+      nextItem = {
+        ...nextItem,
+        slotId: assignSlotIdForItem(nextItem)
+      };
+    }
+
+    return nextItem;
+  };
+
   // 场景标签映射函数
-  const getSceneTagFromTitle = (title: string, contentCategory?: string, sceneTag?: SceneTag, summary?: string): SceneTag => {
+  const getSceneTagFromTitle = (title: string, contentCategory?: string | ContentCategory, sceneTag?: SceneTag, summary?: string): SceneTag => {
     // 如果后端返回了 sceneTag，优先使用
     if (sceneTag && SCENE_CONFIGS[sceneTag]) {
       return sceneTag;
@@ -239,9 +496,10 @@ export function SupplyDepotApp({
     if (title === '睡前冥想' || title.startsWith('睡前冥想')) return 'sleep_meditation';
     
     // 根据内容类型推断
-    if (contentCategory === 'history') return 'commute';
-    if (contentCategory === 'math_geometry' || contentCategory === 'physics') return 'focus';
-    if (contentCategory === 'language') return 'qa_memory';
+    const mainCategory = normalizeMainCategory(contentCategory);
+    if (mainCategory === 'history' || isHistoryCategory(mainCategory)) return 'commute';
+    if (mainCategory === 'math_geometry' || mainCategory === 'physics' || isScienceCategory(mainCategory)) return 'focus';
+    if (mainCategory === 'language' || isLanguageCategory(mainCategory)) return 'qa_memory';
     
     // 根据标题和摘要中的关键词推断（用于问答式记忆）
     const textToCheck = `${title} ${summary || ''}`.toLowerCase();
@@ -287,6 +545,9 @@ export function SupplyDepotApp({
       mode: 'single',
       contentType: 'output',
       sceneTag: 'sleep_meditation',
+      contentCategory: { main: '其他', aux: ['冥想'] },
+      formType: '音乐',
+      slotId: 'sleep_relax',
       isGenerating: true,
       generationProgress: '正在生成中...',
       playbackProgress: { hasStarted: false },
@@ -314,6 +575,9 @@ export function SupplyDepotApp({
       mode: 'single',
       contentType: 'output',
       sceneTag: 'sleep_meditation',
+      contentCategory: { main: '其他', aux: ['放松'] },
+      formType: '音乐',
+      slotId: 'noon_rest',
       isGenerating: true,
       generationProgress: '正在生成中...',
       playbackProgress: { hasStarted: false },
@@ -341,6 +605,39 @@ export function SupplyDepotApp({
       mode: 'single',
       contentType: 'output',
       sceneTag: 'home_charge',
+      contentCategory: { main: '其他', aux: ['时事资讯', '科技'] },
+      formType: '时事资讯',
+      slotId: 'noon_news',
+      isGenerating: true,
+      generationProgress: '正在生成中...',
+      playbackProgress: { hasStarted: false },
+      script: [
+        { speaker: 'AI', text: '欢迎收听科技时事，了解最新科技动态。' },
+        { speaker: 'AI', text: '今天我们来聊聊最新的科技趋势和创新。' },
+        { speaker: 'AI', text: '让我们一起探索科技世界的精彩。' }
+      ],
+      audioUrl: '/assets/default-audio/tech-news.m4a'
+    },
+    {
+      id: 'default-4',
+      title: '科技时事',
+      duration: '15:00',
+      type: 'tech',
+      tldr: '了解最新科技动态',
+      subtitles: [
+        { time: '00:00', text: 'AI: 欢迎收听科技时事，了解最新科技动态。' },
+        { time: '00:10', text: 'AI: 今天我们来聊聊最新的科技趋势和创新。' },
+        { time: '00:20', text: 'AI: 让我们一起探索科技世界的精彩。' }
+      ],
+      status: 'ready',
+      scenes: ['casual'],
+      subject: 'tech',
+      mode: 'single',
+      contentType: 'output',
+      sceneTag: 'home_charge',
+      contentCategory: { main: '其他', aux: ['时事资讯', '科技'] },
+      formType: '时事资讯',
+      slotId: 'post_dinner_news',
       isGenerating: true,
       generationProgress: '正在生成中...',
       playbackProgress: { hasStarted: false },
@@ -352,6 +649,67 @@ export function SupplyDepotApp({
       audioUrl: '/assets/default-audio/tech-news.m4a'
     }
   ];
+
+  const scheduleDefaultItemsCompletion = () => {
+    if (defaultCompletionScheduledRef.current) return;
+    defaultCompletionScheduledRef.current = true;
+    defaultCompletionTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    defaultCompletionTimersRef.current = [];
+    const defaultItemIds = ['default-1', 'default-2', 'default-3', 'default-4'];
+    const defaultAudioPaths = [
+      '/assets/default-audio/sleep-meditation.m4a',
+      '/assets/default-audio/relax-music.m4a',
+      '/assets/default-audio/tech-news.m4a',
+      '/assets/default-audio/tech-news.m4a'
+    ];
+    const defaultScripts = [
+      [
+        { speaker: 'AI', text: '欢迎来到睡前冥想。让我们开始放松身心，准备入睡。' },
+        { speaker: 'AI', text: '深呼吸，感受身体的每一个部位逐渐放松。' },
+        { speaker: 'AI', text: '让思绪慢慢平静下来，进入深度放松状态。' }
+      ],
+      [
+        { speaker: 'AI', text: '听一首轻松的音乐，放松心情。' },
+        { speaker: 'AI', text: '让优美的旋律带走一天的疲惫。' },
+        { speaker: 'AI', text: '享受这片刻的宁静与美好。' }
+      ],
+      [
+        { speaker: 'AI', text: '欢迎收听科技时事，了解最新科技动态。' },
+        { speaker: 'AI', text: '今天我们来聊聊最新的科技趋势和创新。' },
+        { speaker: 'AI', text: '让我们一起探索科技世界的精彩。' }
+      ],
+      [
+        { speaker: 'AI', text: '欢迎收听科技时事，了解最新科技动态。' },
+        { speaker: 'AI', text: '今天我们来聊聊最新的科技趋势和创新。' },
+        { speaker: 'AI', text: '让我们一起探索科技世界的精彩。' }
+      ]
+    ];
+
+    defaultItemIds.forEach((itemId, index) => {
+      const delay = 1000 + Math.random() * 2000;
+      const timerId = window.setTimeout(() => {
+        setFlowItems(prev => {
+          const itemExists = prev.some(item => item.id === itemId);
+          if (!itemExists) {
+            return prev;
+          }
+
+          return prev.map(item =>
+            item.id === itemId
+              ? {
+                  ...item,
+                  isGenerating: false,
+                  generationProgress: undefined,
+                  script: defaultScripts[index],
+                  audioUrl: defaultAudioPaths[index]
+                }
+              : item
+          );
+        });
+      }, delay);
+      defaultCompletionTimersRef.current.push(timerId);
+    });
+  };
 
 
   // 复盘上下文收集函数 (暂时屏蔽)
@@ -1278,6 +1636,15 @@ export function SupplyDepotApp({
     );
   };
 
+  const getPlayableItemsBySlot = (items: FlowItem[], slotId?: SlotId | null): FlowItem[] => {
+    if (!slotId) return getPlayableItems(items);
+    return items.filter(item =>
+      (item.script && item.script.length > 0 || item.audioUrl) &&
+      item.contentType !== 'interactive' &&
+      item.slotId === slotId
+    );
+  };
+
   // 获取所有场景类型的数组 (Filter scenes that have content)
   const sceneTagsArray = useMemo(() => {
     // 暂时屏蔽 'daily_review'
@@ -1285,6 +1652,36 @@ export function SupplyDepotApp({
     // Only include scenes that have playable items
     return allTags.filter(tag => getPlayableItems(flowItems, tag).length > 0);
   }, [flowItems]);
+
+  const slotGroups = useMemo(() => {
+    const groups = SLOT_DEFINITIONS.map((slot) => ({
+      slot,
+      items: [] as FlowItem[]
+    }));
+    const groupById = new Map<SlotId, { slot: SlotDefinition; items: FlowItem[] }>();
+    groups.forEach(group => groupById.set(group.slot.id, group));
+
+    for (const item of flowItems) {
+      const slotId = item.slotId ?? DEFAULT_SLOT_ID;
+      const targetGroup = groupById.get(slotId) ?? groupById.get(DEFAULT_SLOT_ID);
+      if (targetGroup) {
+        targetGroup.items.push(item);
+      }
+    }
+
+    return groups.filter(group => group.items.length > 0);
+  }, [flowItems]);
+
+  const prevSlotIdsRef = useRef<string>('');
+  useEffect(() => {
+    if (!onAvailableSlotsChange) return;
+    const slotIds = slotGroups.map(group => group.slot.id);
+    const nextKey = JSON.stringify(slotIds);
+    if (prevSlotIdsRef.current !== nextKey) {
+      onAvailableSlotsChange(slotIds);
+      prevSlotIdsRef.current = nextKey;
+    }
+  }, [slotGroups, onAvailableSlotsChange]);
 
   // Sync available scenes to parent
   const prevSceneTagsRef = useRef<string>('');
@@ -1298,12 +1695,13 @@ export function SupplyDepotApp({
 
   // Ensure we are on a valid scene (Validation Effect)
   useEffect(() => {
+    if (environmentSlotId) return;
     if (isFlowing && sceneTagsArray.length > 0 && !sceneTagsArray.includes(currentSceneTag)) {
        // If current scene is empty/invalid, switch to the first available one
        const firstAvailable = sceneTagsArray[0];
        onSceneChange(firstAvailable);
     }
-  }, [isFlowing, sceneTagsArray, currentSceneTag, onSceneChange]);
+  }, [environmentSlotId, isFlowing, sceneTagsArray, currentSceneTag, onSceneChange]);
 
   // Calculate current subtitle
   const currentSubtitle = useMemo(() => {
@@ -1489,6 +1887,18 @@ export function SupplyDepotApp({
         }
       }
 
+      if (envForced && environmentSlotId) {
+        const playableItems = getPlayableItemsBySlot(flowItems, environmentSlotId);
+        if (playableItems.length > 0) {
+          const firstItem = playableItems[0];
+          setCurrentPlayingItem(firstItem);
+          setSelectedItem(firstItem);
+          handlePlayAudio(firstItem);
+          setHasAutoPlayed(true);
+          return;
+        }
+      }
+
       const targetScene = sceneTagsArray.includes(currentSceneTag) ? currentSceneTag : sceneTagsArray[0];
       if (currentSceneTag !== targetScene) {
           onSceneChange(targetScene);
@@ -1526,7 +1936,9 @@ export function SupplyDepotApp({
         introToken: environmentIntroToken,
         endsAt: typeof environmentIntroEndsAt === 'number' && Number.isFinite(environmentIntroEndsAt) ? environmentIntroEndsAt : 0
       };
-      const playableItems = getPlayableItems(flowItems, currentSceneTag);
+      const playableItems = environmentSlotId
+        ? getPlayableItemsBySlot(flowItems, environmentSlotId)
+        : getPlayableItems(flowItems, currentSceneTag);
       if (playableItems.length > 0) {
         const firstItem = playableItems[0];
         setCurrentPlayingItem(firstItem);
@@ -1562,6 +1974,7 @@ export function SupplyDepotApp({
     currentSceneTag,
     sceneTagsArray,
     environmentSwitchToken,
+    environmentSlotId,
     isUserInitiatedPlay,
     isMainAudioPlaying,
     isMainAudioLoading,
@@ -2497,6 +2910,7 @@ export function SupplyDepotApp({
             
             if (cachedFlowItem) {
               console.log('[Cache] 使用缓存的 FlowItem');
+              const preparedCachedItem = prepareFlowItem(cachedFlowItem, { assignSlot: true });
               
               // 模拟生成流程的 loading（3-5 秒）
               setGenerationProgress('正在处理文件...');
@@ -2519,9 +2933,10 @@ export function SupplyDepotApp({
               setGenerationProgress('');
               
               // 直接使用缓存的 flowItem
+              let shouldScheduleDefaults = false;
               setFlowItems(prev => {
                 // 检查是否已存在（避免重复添加）
-                const exists = prev.some(item => item.id === cachedFlowItem.id);
+                const exists = prev.some(item => item.id === preparedCachedItem.id);
                 if (exists) {
                   return prev;
                 }
@@ -2531,24 +2946,23 @@ export function SupplyDepotApp({
                 if (isFirstGeneration) {
                   console.log('[Cache] 首次生成，添加默认 items');
                   const defaultItems = getDefaultFlowItems();
-                  // 更新默认 items 状态为已完成（非生成中）
-                  const readyDefaultItems = defaultItems.map(item => ({
-                      ...item,
-                      isGenerating: false,
-                      generationProgress: undefined
-                  }));
-                  return [...readyDefaultItems, cachedFlowItem, ...prev];
+                  shouldScheduleDefaults = true;
+                  return [...defaultItems, preparedCachedItem, ...prev];
                 }
                 
-                return [...prev, cachedFlowItem];
+                return [...prev, preparedCachedItem];
               });
+
+              if (shouldScheduleDefaults) {
+                scheduleDefaultItemsCompletion();
+              }
               
               // 如果有知识卡片，也更新
-              if (cachedFlowItem.knowledgeCards && cachedFlowItem.knowledgeCards.length > 0) {
+              if (preparedCachedItem.knowledgeCards && preparedCachedItem.knowledgeCards.length > 0) {
                 onUpdateKnowledgeCards(prev => {
                   // 合并知识卡片，避免重复
                   const existingIds = new Set(prev.map((card: KnowledgeCard) => card.id));
-                  const newCards = cachedFlowItem.knowledgeCards!
+                  const newCards = preparedCachedItem.knowledgeCards!
                     .filter((card: KnowledgeCard) => !existingIds.has(card.id))
                     .map(card => ({
                       ...card,
@@ -2689,11 +3103,13 @@ export function SupplyDepotApp({
             // Look for JSON object in the text (handling potential markdown code blocks)
             const jsonMatch = accumulatedText.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-                data = JSON.parse(jsonMatch[0]);
+                const sanitizedJson = sanitizeJsonString(jsonMatch[0]);
+                data = JSON.parse(sanitizedJson);
             } else {
                 console.warn("No JSON object found in response, trying to parse full text");
                 // Try parsing the whole thing if no braces found (unlikely but possible)
-                data = JSON.parse(accumulatedText);
+                const sanitizedJson = sanitizeJsonString(accumulatedText);
+                data = JSON.parse(sanitizedJson);
             }
         } catch (parseError) {
             console.error("Failed to parse JSON from response:", parseError);
@@ -2768,7 +3184,7 @@ export function SupplyDepotApp({
         }
 
         // 获取内容类型和场景标签（从后端返回或推断）
-        const contentCategory = data.contentCategory;
+        const contentCategory = normalizeContentCategory(data.contentCategory);
         const backendSceneTag = data.sceneTag as SceneTag | undefined;
         const summary = data.summary || '';
         const originalTitle = data.title || 'AI 深度分析';
@@ -2778,6 +3194,7 @@ export function SupplyDepotApp({
         
         // 获取最终场景标签（使用更新后的标题）
         const sceneTag = getSceneTagFromTitle(finalTitle, contentCategory, backendSceneTag, summary);
+        const formType = getFormTypeFromPreset(generationPreferences?.preset || genPreset);
 
         const aiFlowItem: FlowItem = {
             id: Math.random().toString(36).slice(2, 11),
@@ -2795,10 +3212,14 @@ export function SupplyDepotApp({
             script: data.podcastScript,
             knowledgeCards: newCards,
             sceneTag: sceneTag,
+            contentCategory: contentCategory,
+            formType: formType,
             playbackProgress: {
                 hasStarted: false
             }
         };
+
+        const preparedAiFlowItem = prepareFlowItem(aiFlowItem, { assignSlot: true });
 
         // 缓存 FlowItem（包含 script、knowledgeCards、tldr 等所有字段）
         try {
@@ -2806,7 +3227,7 @@ export function SupplyDepotApp({
             const firstFile = selectedFiles[0];
             const fileHash = await generateFileHash(firstFile);
             const preset = generationPreferences?.preset || genPreset;
-            cacheManager.cacheFlowItem(fileHash, preset, aiFlowItem);
+            cacheManager.cacheFlowItem(fileHash, preset, preparedAiFlowItem);
             console.log('[Cache] FlowItem 已缓存:', fileHash, preset);
           }
         } catch (error) {
@@ -2815,7 +3236,7 @@ export function SupplyDepotApp({
         }
 
         // 检查是否为首次生成 (当列表为空时，视为从 0 到 1 的生成)
-        let newFlowItems: FlowItem[] = [aiFlowItem];
+        let newFlowItems: FlowItem[] = [preparedAiFlowItem];
         
         // 使用 functional update 确保基于最新状态判断
         setFlowItems(prev => {
@@ -2830,62 +3251,7 @@ export function SupplyDepotApp({
 
         // 尝试启动预生成 items 的动画更新
         // 这里无法直接知道是否添加了 items，但运行更新逻辑是安全的（找不到 item 会忽略）
-        setTimeout(() => {
-          const updateDefaultItems = async () => {
-            const defaultItemIds = ['default-1', 'default-2', 'default-3'];
-            const defaultAudioPaths = [
-              '/assets/default-audio/sleep-meditation.m4a',
-              '/assets/default-audio/relax-music.m4a',
-              '/assets/default-audio/tech-news.m4a'
-            ];
-            const defaultScripts = [
-              [
-                { speaker: 'AI', text: '欢迎来到睡前冥想。让我们开始放松身心，准备入睡。' },
-                { speaker: 'AI', text: '深呼吸，感受身体的每一个部位逐渐放松。' },
-                { speaker: 'AI', text: '让思绪慢慢平静下来，进入深度放松状态。' }
-              ],
-              [
-                { speaker: 'AI', text: '听一首轻松的音乐，放松心情。' },
-                { speaker: 'AI', text: '让优美的旋律带走一天的疲惫。' },
-                { speaker: 'AI', text: '享受这片刻的宁静与美好。' }
-              ],
-              [
-                { speaker: 'AI', text: '欢迎收听科技时事，了解最新科技动态。' },
-                { speaker: 'AI', text: '今天我们来聊聊最新的科技趋势和创新。' },
-                { speaker: 'AI', text: '让我们一起探索科技世界的精彩。' }
-              ]
-            ];
-            
-            for (let i = 0; i < defaultItemIds.length; i++) {
-              const delay = i === 0 ? 500 : 800 + Math.random() * 400;
-              await new Promise(resolve => setTimeout(resolve, delay));
-              
-              setFlowItems(prev => {
-                const itemExists = prev.some(item => item.id === defaultItemIds[i]);
-                if (!itemExists) {
-                  // 如果 item 不存在，说明可能不是首次生成，或者被删除了，直接跳过
-                  return prev;
-                }
-                
-                const updated = prev.map(item => 
-                  item.id === defaultItemIds[i] 
-                    ? { 
-                        ...item, 
-                        isGenerating: false,
-                        generationProgress: undefined,
-                        script: defaultScripts[i], // 添加 script 用于字幕显示
-                        audioUrl: defaultAudioPaths[i] // 添加直接音频 URL
-                      }
-                    : item
-                );
-                return updated;
-              });
-            }
-          };
-          updateDefaultItems().catch(err => {
-            console.error('更新预生成 items 状态失败:', err);
-          });
-        }, 300);
+        scheduleDefaultItemsCompletion();
 
         setReadyToFlow(true);
         setShowInputPanel(false);
@@ -3243,130 +3609,128 @@ export function SupplyDepotApp({
           {/* FlowItem 列表 */}
           <div className="pb-4">
               <div className="flex flex-col">
-                {flowItems
-                .sort((a, b) => {
-                    const scenePriority: Record<string, number> = {
-                        'daily_review': -1,  // 今日复盘排在最前面
-                        'default': 0,        // 默认场景标签排在首位
-                        'commute': 1,
-                        'home_charge': 2,
-                        'focus': 3,
-                        'qa_memory': 4,
-                        'sleep_meditation': 5
-                    };
-                    const pA = scenePriority[a.sceneTag || 'default'] ?? 7;
-                    const pB = scenePriority[b.sceneTag || 'default'] ?? 7;
-                    return pA - pB;
-                })
-                .filter(item => {
-                  // 生成中的 items 始终显示
-                  if (item.isGenerating) return true;
-                  
-                  // 筛选逻辑已移除，显示所有项目
-                  return true;
-                }).map((item) => {
-                  const sceneTag = item.sceneTag || 'default';
-                  const sceneConfig = SCENE_CONFIGS[sceneTag];
-                  const SceneIcon = sceneConfig.icon;
-                  const isSelected = selectedItem?.id === item.id;
-                  
-                  return (
-                    <div
-                      key={item.id}
-                      className="relative"
-                    >
-                      {/* FlowItem - Compact Modern List Style */}
-                      <div
-                        onClick={() => setSelectedItem(item)}
-                        role="button"
-                        tabIndex={0}
-                        className={clsx(
-                          "w-full flex items-center justify-between py-2 px-4 group transition-all active:scale-[0.99] border-b border-slate-50 last:border-0 cursor-pointer",
-                          isSelected
-                            ? "bg-indigo-50/40"
-                            : "hover:bg-slate-50/60"
-                        )}
-                      >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          {/* 1. Compact Cover/Icon with Shadow */}
-                          <div className={clsx(
-                              "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 shadow-sm transition-all duration-300",
-                              isSelected 
-                                ? "bg-indigo-100 text-indigo-600 shadow-indigo-100" 
-                                : "bg-slate-50 text-slate-400 group-hover:bg-white group-hover:shadow-md group-hover:text-indigo-500 group-hover:scale-105"
-                          )}>
-                            <SceneIcon size={18} strokeWidth={1.5} />
-                          </div>
-                          
-                          {/* 2. Content Hierarchy */}
-                          <div className="flex flex-col items-start min-w-0 flex-1">
-                             {/* Top Tag */}
-                            <div className="flex items-center gap-2 mb-0.5">
-                                <span className="text-[9px] font-bold text-indigo-500 tracking-wider uppercase bg-indigo-50 px-1.5 py-0.5 rounded-md scale-90 origin-left">
-                                    {sceneConfig.label}
-                                </span>
-                            </div>
-
-                            {/* Main Title */}
-                            <span className={clsx(
-                                "text-[13px] font-bold leading-snug line-clamp-1 mb-0 transition-colors",
-                                item.isGenerating 
-                                  ? "text-slate-400" 
-                                  : isSelected 
-                                    ? "text-indigo-900" 
-                                    : "text-slate-800 group-hover:text-slate-900"
-                            )}>
-                                {item.title.replace(/^(速听精华：|深度剖析：|提问练习：|回家路上：|静坐专注：|问答式记忆：)/, '')}
-                            </span>
-                            
-                            {/* 生成中状态或 Subtitle / TLDR */}
-                            {item.isGenerating ? (
-                              <div className="flex items-center gap-1.5 text-[9px] text-indigo-500 font-medium mt-0.5">
-                                <Loader2 size={10} className="animate-spin" />
-                                <span>{item.generationProgress || '正在生成中...'}</span>
-                              </div>
-                            ) : (
-                              <span className="text-[9px] text-slate-400 font-medium line-clamp-1 group-hover:text-slate-500 transition-colors">
-                                  {item.tldr || "点击查看详情..."}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* 3. Play Button (Replaces Selection) */}
-                        <button
-                          onClick={(e) => {
-                              e.stopPropagation();
-                              if (!item.isGenerating) {
-                                setSelectedItem(item);
-                                handlePlayAudio(item, true); // 用户手动点击
-                              }
-                          }}
-                          disabled={item.isGenerating}
-                          className={clsx(
-                            "pl-3 py-2",
-                            item.isGenerating && "cursor-not-allowed opacity-50"
-                          )}
-                        >
-                            <div className={clsx(
-                                "w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200",
-                                item.isGenerating
-                                  ? "bg-slate-100 text-slate-300"
-                                  : isSelected
-                                    ? "bg-indigo-600 text-white shadow-indigo-200 group-hover:scale-110 group-hover:shadow-md"
-                                    : "bg-slate-100 text-slate-400 group-hover:bg-indigo-500 group-hover:text-white group-hover:scale-110 group-hover:shadow-md"
-                            )}>
-                                {item.isGenerating ? (
-                                  <Loader2 size={12} className="animate-spin" />
-                                ) : (
-                                  <Play size={12} fill="currentColor" className="ml-0.5" />
-                                )}
-                            </div>
-                        </button>
-                      </div>
+                {slotGroups.map((group) => (
+                  <div key={group.slot.id} className="border-b border-slate-100 last:border-0">
+                    <div className="px-4 py-2 bg-slate-50/80 text-[11px] font-bold text-slate-700 tracking-wide">
+                      {group.slot.label}
                     </div>
-                  );
-                })}
+                    <div className="flex flex-col">
+                      {group.items.map((item) => {
+                        const sceneTag = item.sceneTag || 'default';
+                        const sceneConfig = SCENE_CONFIGS[sceneTag];
+                        const SceneIcon = sceneConfig.icon;
+                        const isSelected = selectedItem?.id === item.id;
+                        const mainCategory = item.contentCategory?.main;
+                        const auxCategories = item.contentCategory?.aux || [];
+                        const categoryPills = [mainCategory, ...auxCategories]
+                          .filter((pill): pill is string => Boolean(pill) && pill !== '其他')
+                          .slice(0, 4);
+
+                        return (
+                          <div
+                            key={item.id}
+                            className="relative"
+                          >
+                            {/* FlowItem - Compact Modern List Style */}
+                            <div
+                              onClick={() => setSelectedItem(item)}
+                              role="button"
+                              tabIndex={0}
+                              className={clsx(
+                                "w-full flex items-center justify-between py-2 px-4 group transition-all active:scale-[0.99] border-b border-slate-50 last:border-0 cursor-pointer",
+                                isSelected
+                                  ? "bg-indigo-50/40"
+                                  : "hover:bg-slate-50/60"
+                              )}
+                            >
+                              <div className="flex items-center gap-3 min-w-0 flex-1">
+                                {/* 1. Compact Cover/Icon with Shadow */}
+                                <div className={clsx(
+                                    "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 shadow-sm transition-all duration-300",
+                                    isSelected 
+                                      ? "bg-indigo-100 text-indigo-600 shadow-indigo-100" 
+                                      : "bg-slate-50 text-slate-400 group-hover:bg-white group-hover:shadow-md group-hover:text-indigo-500 group-hover:scale-105"
+                                )}>
+                                  <SceneIcon size={18} strokeWidth={1.5} />
+                                </div>
+                                
+                                {/* 2. Content Hierarchy */}
+                                <div className="flex flex-col items-start min-w-0 flex-1">
+                                   {/* Category Pills */}
+                                  <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+                                    {categoryPills.map((pill, index) => (
+                                      <span
+                                        key={`${item.id}-pill-${pill}-${index}`}
+                                        className="text-[9px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md"
+                                      >
+                                        {pill}
+                                      </span>
+                                    ))}
+                                  </div>
+
+                                  {/* Main Title */}
+                                  <span className={clsx(
+                                      "text-[13px] font-bold leading-snug line-clamp-1 mb-0 transition-colors",
+                                      item.isGenerating 
+                                        ? "text-slate-400" 
+                                        : isSelected 
+                                          ? "text-indigo-900" 
+                                          : "text-slate-800 group-hover:text-slate-900"
+                                  )}>
+                                      {item.title.replace(/^(速听精华：|深度剖析：|提问练习：|回家路上：|静坐专注：|问答式记忆：)/, '')}
+                                  </span>
+                                  
+                                  {/* 生成中状态或 Subtitle / TLDR */}
+                                  {item.isGenerating ? (
+                                    <div className="flex items-center gap-1.5 text-[9px] text-indigo-500 font-medium mt-0.5">
+                                      <Loader2 size={10} className="animate-spin" />
+                                      <span>{item.generationProgress || '正在生成中...'}</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[9px] text-slate-400 font-medium line-clamp-1 group-hover:text-slate-500 transition-colors">
+                                        {item.tldr || "点击查看详情..."}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* 3. Play Button (Replaces Selection) */}
+                              <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!item.isGenerating) {
+                                      setSelectedItem(item);
+                                      handlePlayAudio(item, true); // 用户手动点击
+                                    }
+                                }}
+                                disabled={item.isGenerating}
+                                className={clsx(
+                                  "pl-3 py-2",
+                                  item.isGenerating && "cursor-not-allowed opacity-50"
+                                )}
+                              >
+                                  <div className={clsx(
+                                      "w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200",
+                                      item.isGenerating
+                                        ? "bg-slate-100 text-slate-300"
+                                        : isSelected
+                                          ? "bg-indigo-600 text-white shadow-indigo-200 group-hover:scale-110 group-hover:shadow-md"
+                                          : "bg-slate-100 text-slate-400 group-hover:bg-indigo-500 group-hover:text-white group-hover:scale-110 group-hover:shadow-md"
+                                  )}>
+                                      {item.isGenerating ? (
+                                        <Loader2 size={12} className="animate-spin" />
+                                      ) : (
+                                        <Play size={12} fill="currentColor" className="ml-0.5" />
+                                      )}
+                                  </div>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
             

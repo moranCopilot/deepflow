@@ -53,6 +53,10 @@ export const detailedDialoguePrompt: PromptTemplate = {
     {
       "title": "A catchy title for this session",
       "summary": "A brief summary of the content (max 100 words)",
+      "contentCategory": {
+        "main": "数学",
+        "aux": ["最多2个辅助题材或特点"]
+      },
       "knowledgeCards": [
         {
           "title": "Concept Name",
@@ -77,6 +81,10 @@ export const detailedDialoguePrompt: PromptTemplate = {
     1. SCRIPT LENGTH & DETAIL:
        ${lengthInstruction}
        - STRICTLY RETAIN specific details, numbers, dates, and key data from the source. Do not summarize away the specifics.
+
+    1.5. CONTENT CATEGORY:
+       - main: 优先从以下主类型中选其一：数学、物理、化学、语文、英文、历史、政治、生物、其他。必须是单一词，不要复合词、斜杠或并列；若确实无法归类，用一个更具体的单词代替（不加“其他”前缀）。
+       - aux: 最多2个，用于描述更具体的题材或特点（如“初中几何”“函数”“诗词”）。
     
     2. STRUCTURE & KNOWLEDGE CARDS:
        - Organize the content around the Knowledge Cards.
@@ -90,7 +98,7 @@ export const detailedDialoguePrompt: PromptTemplate = {
     4. GENERAL:
        - Language: Chinese (Simplified).
        - Tone: Natural, engaging, deep dive.
-       - Output only the JSON object. No markdown.
+       - Output only the JSON object. No markdown. 禁止使用 LaTeX/反斜杠命令（如 \\angle、\\sqrt、$...$），公式请用中文或 Unicode 表达（如“角 DAC”“2√2”）。
     `;
     }
 };

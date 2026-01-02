@@ -46,6 +46,10 @@ export const interactivePracticePrompt: PromptTemplate = {
     {
       "title": "[文档标题]",
       "summary": "本期练习的重点范围说明。",
+      "contentCategory": {
+        "main": "数学",
+        "aux": ["最多2个辅助题材或特点"]
+      },
       "knowledgeCards": [
         {
           "title": "问题/概念",
@@ -73,8 +77,11 @@ export const interactivePracticePrompt: PromptTemplate = {
     1. SCRIPT LENGTH: Aim for ~1500 Chinese characters (approx 10 mins interaction).
     2. INTERACTIVITY: The script should read like a game host or tutor, not a lecturer.
     3. QUESTION TYPES: Mix of direct recall (What is X?) and application (How does X apply to Y?).
-    4. LANGUAGE: Chinese (Simplified).
-    5. Output only the JSON object. No markdown.
+    4. CONTENT CATEGORY:
+       - main: 优先从以下主类型中选其一：数学、物理、化学、语文、英文、历史、政治、生物、其他。必须是单一词，不要复合词、斜杠或并列；若确实无法归类，用一个更具体的单词代替（不加“其他”前缀）。
+       - aux: 最多2个，用于描述题材或特点。
+    5. LANGUAGE: Chinese (Simplified).
+    6. Output only the JSON object. No markdown. 禁止使用 LaTeX/反斜杠命令（如 \\angle、\\sqrt、$...$），公式请用中文或 Unicode 表达（如“角 DAC”“2√2”）。
     `;
     }
 };

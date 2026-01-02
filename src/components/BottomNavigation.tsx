@@ -18,7 +18,7 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({ currentPage,
   ];
 
   return (
-    <div className="absolute bottom-1 left-1/2 transform -translate-x-1/2 z-50 w-full max-w-[calc(100%-2rem)] flex justify-center">
+    <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 z-50 w-full max-w-[calc(100%-2rem)] flex justify-center pb-2">
       <div className="flex items-center gap-1 p-1.5 bg-white/90 backdrop-blur-xl border border-white/20 shadow-xl shadow-black/5 rounded-full ring-1 ring-black/5">
         {navItems.map((item) => {
           const isActive = currentPage === item.id;

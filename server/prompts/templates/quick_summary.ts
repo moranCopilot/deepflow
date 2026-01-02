@@ -40,6 +40,10 @@ export const quickSummaryPrompt: PromptTemplate = {
     {
       "title": "[文档标题]",
       "summary": "一句话概括本期速听精华的核心内容。",
+      "contentCategory": {
+        "main": "数学",
+        "aux": ["最多2个辅助题材或特点"]
+      },
       "knowledgeCards": [
         {
           "title": "核心知识点",
@@ -58,8 +62,11 @@ export const quickSummaryPrompt: PromptTemplate = {
     CRITICAL REQUIREMENTS:
     1. SCRIPT LENGTH: Aim for ~800-1000 Chinese characters (approx 5 mins spoken).
     2. EMPHASIS: Use phrases like "这里请大家画个重点", "这个概念非常重要", "请记住".
-    3. LANGUAGE: Chinese (Simplified).
-    4. Output only the JSON object. No markdown.
+    3. CONTENT CATEGORY:
+       - main: 优先从以下主类型中选其一：数学、物理、化学、语文、英文、历史、政治、生物、其他。必须是单一词，不要复合词、斜杠或并列；若确实无法归类，用一个更具体的单词代替（不加“其他”前缀）。
+       - aux: 最多2个，用于描述更具体的题材或特点（如“初中几何”“函数”“诗词”）。
+    4. LANGUAGE: Chinese (Simplified).
+    5. Output only the JSON object. No markdown. 禁止使用 LaTeX/反斜杠命令（如 \\angle、\\sqrt、$...$），公式请用中文或 Unicode 表达（如“角 DAC”“2√2”）。
     `;
     }
 };
