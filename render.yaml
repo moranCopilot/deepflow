@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: deepflow
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build && cd server && npm install
+    startCommand: cd server && npx tsx index.ts
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+    autoDeploy: false
