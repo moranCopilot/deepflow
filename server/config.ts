@@ -14,19 +14,31 @@ const __dirname = path.dirname(__filename);
  * 3. .env (Default)
  */
 function loadEnvironment() {
-    // 1. Load default .env
-    const defaultEnvPath = path.resolve(__dirname, '.env');
+    // Look for .env in the project root (one level up from server directory)
+    const rootDir = path.resolve(__dirname, '..');
+    
+    // 1. Load default .env from root
+    const defaultEnvPath = path.resolve(rootDir, '.env');
     if (fs.existsSync(defaultEnvPath)) {
         dotenv.config({ path: defaultEnvPath });
+        console.log(`Loaded environment from ${defaultEnvPath}`);
+    } else {
+        // Fallback: Try server directory for backward compatibility
+        const serverEnvPath = path.resolve(__dirname, '.env');
+        if (fs.existsSync(serverEnvPath)) {
+            dotenv.config({ path: serverEnvPath });
+            console.log(`Loaded environment from ${serverEnvPath}`);
+        }
     }
 
-    // 2. Load .env.local and override
-    const localEnvPath = path.resolve(__dirname, '.env.local');
+    // 2. Load .env.local from root and override
+    const localEnvPath = path.resolve(rootDir, '.env.local');
     if (fs.existsSync(localEnvPath)) {
         const envConfig = dotenv.parse(fs.readFileSync(localEnvPath));
         for (const k in envConfig) {
             process.env[k] = envConfig[k];
         }
+        console.log(`Loaded overrides from ${localEnvPath}`);
     }
 }
 

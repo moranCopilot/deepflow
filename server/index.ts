@@ -2,6 +2,8 @@ import express from 'express';
 import multer from 'multer';
 import cors from 'cors';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
 import * as googleTTS from 'google-tts-api';
@@ -15,6 +17,8 @@ import liveSessionRouter from './live-session.js';
 import mammoth from 'mammoth';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const WordExtractor = require('word-extractor');
 
 // Configure global proxy for all HTTP/HTTPS requests
@@ -624,6 +628,26 @@ app.post('/api/analyze', upload.array('files'), async (req, res): Promise<any> =
     res.status(500).json({ error: userFriendlyMessage });
   }
 });
+
+// Serve static files from the React app build directory
+const distPath = path.join(__dirname, '../dist');
+if (fs.existsSync(distPath)) {
+  console.log(`Serving static files from ${distPath}`);
+  app.use(express.static(distPath));
+
+  // The "catchall" handler: for any request that doesn't
+  // match one above, send back React's index.html file.
+  app.get('*', (req, res) => {
+    // Don't serve index.html for api requests that weren't handled
+    if (req.path.startsWith('/api/')) {
+       res.status(404).json({ error: 'API endpoint not found' });
+       return;
+    }
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  console.log(`Static files not found at ${distPath}. Run 'npm run build' to generate them.`);
+}
 
 function checkPortInUse(targetPort: number): Promise<boolean> {
   return new Promise((resolve) => {
