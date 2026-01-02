@@ -325,6 +325,11 @@ export function SupplyDepotApp({
   const [communityDetailListId, setCommunityDetailListId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<string>('');
+  const [streamingStatus, setStreamingStatus] = useState<{
+    stage: 'preparing' | 'uploading' | 'connecting_ai' | 'analyzing' | 'generating_title' | 'generating_script' | 'generating_cards';
+    text: string;
+    scriptItems: Array<{speaker: string, text: string}>;
+  } | undefined>(undefined);
   const [readyToFlow, setReadyToFlow] = useState(false);
   const [selectedItem, setSelectedItem] = useState<FlowItem | null>(null);
   const [showInputPanel, setShowInputPanel] = useState(false);
@@ -2893,6 +2898,9 @@ export function SupplyDepotApp({
     if (rawInputs.length === 0) return;
     
     const maxRetries = 2;
+    if (retryCount === 0) {
+      setStreamingStatus(undefined);
+    }
     setIsGenerating(true);
     setGenerationProgress(retryCount > 0 ? `重试中 (${retryCount}/${maxRetries})...` : '正在处理文件...');
 
@@ -2985,8 +2993,12 @@ export function SupplyDepotApp({
           }
         }
         
-        // 压缩文件（如果需要）
         setGenerationProgress('正在检查和压缩文件...');
+        setStreamingStatus(prev => prev && retryCount > 0 ? prev : {
+          stage: 'preparing',
+          text: '正在检查和压缩文件...',
+          scriptItems: []
+        });
         const processedFiles: File[] = [];
         
         for (const file of selectedFiles) {
@@ -2999,6 +3011,11 @@ export function SupplyDepotApp({
         }
 
         setGenerationProgress('正在上传文件...');
+        setStreamingStatus(prev => prev && retryCount > 0 ? prev : {
+          stage: 'uploading',
+          text: '正在上传文件到服务器...',
+          scriptItems: []
+        });
         const formData = new FormData();
         processedFiles.forEach(file => {
             formData.append('files', file);
@@ -3008,6 +3025,11 @@ export function SupplyDepotApp({
         formData.append('preferences', JSON.stringify(generationPreferences));
 
         setGenerationProgress(retryCount > 0 ? `重试中 (${retryCount}/${maxRetries})...` : '正在分析内容...');
+        setStreamingStatus(prev => prev && retryCount > 0 ? prev : {
+          stage: 'connecting_ai',
+          text: '正在连接 Gemini 模型...',
+          scriptItems: []
+        });
         
         // Use the new API with timeout
         const controller = new AbortController();
@@ -3073,6 +3095,13 @@ export function SupplyDepotApp({
         const decoder = new TextDecoder();
         let accumulatedText = '';
         
+        // Initialize streaming status
+        setStreamingStatus({
+            stage: 'analyzing',
+            text: '正在分析内容...',
+            scriptItems: []
+        });
+
         if (reader) {
             try {
                 while (true) {
@@ -3082,12 +3111,59 @@ export function SupplyDepotApp({
                     const chunk = decoder.decode(value, { stream: true });
                     accumulatedText += chunk;
                     
+                    // Analyze stage and content
+                    let currentStage: 'analyzing' | 'generating_title' | 'generating_script' | 'generating_cards' = 'analyzing';
+                    
+                    if (accumulatedText.includes('"knowledgeCards"')) {
+                        currentStage = 'generating_cards';
+                    } else if (accumulatedText.includes('"podcastScript"')) {
+                        currentStage = 'generating_script';
+                    } else if (accumulatedText.includes('"title"')) {
+                        currentStage = 'generating_title';
+                    }
+
+                    // Extract script items
+                    // Look for {"speaker": "...", "text": "..."} pattern
+                    // We use a regex that handles escaped quotes and newlines in text
+                    const scriptRegex = /\{\s*"speaker"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\[\s\S])*)"\s*\}/g;
+                    const scriptItems: Array<{speaker: string, text: string}> = [];
+                    let match;
+                    
+                    // We only care about script items if we are in or past the script generation stage
+                    // AND strictly inside the podcastScript array to avoid parsing prompt examples or hallucinations
+                    const scriptKeyIndex = accumulatedText.indexOf('"podcastScript"');
+                    
+                    if (scriptKeyIndex !== -1) {
+                        // Find the start of the array '[' after "podcastScript"
+                        const arrayStartIndex = accumulatedText.indexOf('[', scriptKeyIndex);
+                        
+                        if (arrayStartIndex !== -1) {
+                             // Only parse content AFTER the array starts
+                             const validScriptContent = accumulatedText.slice(arrayStartIndex);
+                             
+                             while ((match = scriptRegex.exec(validScriptContent)) !== null) {
+                                scriptItems.push({
+                                    speaker: match[1],
+                                    text: match[2].replace(/\\"/g, '"').replace(/\\n/g, '\n') // Unescape quotes and newlines
+                                });
+                            }
+                        }
+                    }
+
+                    setStreamingStatus({
+                        stage: currentStage,
+                        text: `正在生成内容... (${accumulatedText.length} 字符)`,
+                        scriptItems
+                    });
+                    
                     // Update progress to show liveness
                     setGenerationProgress(`正在生成内容... (${accumulatedText.length} 字符)`);
                 }
             } catch (streamError) {
                 console.error("Stream reading error:", streamError);
-                throw new Error("STREAM_ERROR");
+                // Don't throw error immediately, try to process what we have
+                // This handles cases where backend connection closes prematurely but we might have enough data
+                console.log("Attempting to recover from stream error with accumulated text...");
             }
         } else {
             // Fallback for non-streaming response (should not happen with new backend)
@@ -3326,7 +3402,7 @@ export function SupplyDepotApp({
 
   const renderInputPanel = () => {
     if (isGenerating) {
-        return <PackingAnimation fileNames={selectedFiles.map(f => f.name)} />;
+        return <PackingAnimation fileNames={selectedFiles.map(f => f.name)} streamingStatus={streamingStatus} />;
     }
 
     return (

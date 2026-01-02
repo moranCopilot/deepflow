@@ -3,11 +3,18 @@ import { Camera, FileText, Box, Sparkles, ArrowDown, Music } from 'lucide-react'
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import { StreamingScriptDisplay } from './StreamingScriptDisplay';
+
 interface PackingAnimationProps {
     fileNames?: string[];
+    streamingStatus?: {
+        stage: string;
+        text: string;
+        scriptItems: Array<{speaker: string, text: string}>;
+    };
 }
 
-export function PackingAnimation({ fileNames = [] }: PackingAnimationProps) {
+export function PackingAnimation({ fileNames = [], streamingStatus }: PackingAnimationProps) {
   // Stages:
   // 1. gathering: Items appear and move towards center
   // 2. packing: Box appears, items fall in
@@ -16,6 +23,12 @@ export function PackingAnimation({ fileNames = [] }: PackingAnimationProps) {
   const [stage, setStage] = useState<'gathering' | 'packing' | 'sealing' | 'processing'>('gathering');
 
   useEffect(() => {
+    // If streamingStatus is provided, we might want to force stage to processing
+    if (streamingStatus) {
+        setStage('processing');
+        return;
+    }
+
     // Sequence timing
     const t1 = setTimeout(() => setStage('packing'), 2000); // Give more time to read filenames
     const t2 = setTimeout(() => setStage('sealing'), 3500);
@@ -26,7 +39,7 @@ export function PackingAnimation({ fileNames = [] }: PackingAnimationProps) {
       clearTimeout(t2);
       clearTimeout(t3);
     };
-  }, []);
+  }, [streamingStatus]); // Add streamingStatus dependency
 
   const truncateFileName = (name: string) => {
     if (name.length <= 12) return name;
@@ -197,27 +210,36 @@ export function PackingAnimation({ fileNames = [] }: PackingAnimationProps) {
       </div>
 
       {/* Text Feedback */}
-      <div className="mt-4 h-6 text-center overflow-hidden relative w-full">
-         <AnimatePresence mode="wait">
-            <motion.p
-                key={stage}
-                initial={{ y: 20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: -20, opacity: 0 }}
-                className={clsx(
-                    "text-xs font-bold uppercase tracking-widest absolute w-full",
-                    stage === 'gathering' ? "text-slate-400" :
-                    stage === 'packing' ? "text-amber-600" :
-                    stage === 'sealing' ? "text-amber-600" :
-                    "text-indigo-600"
-                )}
-            >
-                {stage === 'gathering' && "Collecting Assets..."}
-                {stage === 'packing' && "Packing Knowledge..."}
-                {stage === 'sealing' && "Sealing Package..."}
-                {stage === 'processing' && "AI Processing..."}
-            </motion.p>
-         </AnimatePresence>
+      <div className="mt-4 h-16 w-full relative flex items-end justify-center">
+         {stage === 'processing' && streamingStatus ? (
+             <StreamingScriptDisplay 
+                stage={streamingStatus.stage}
+                scriptItems={streamingStatus.scriptItems}
+             />
+         ) : (
+             <div className="h-6 text-center overflow-hidden relative w-full mb-1">
+                <AnimatePresence mode="wait">
+                    <motion.p
+                        key={stage}
+                        initial={{ y: 20, opacity: 0 }}
+                        animate={{ y: 0, opacity: 1 }}
+                        exit={{ y: -20, opacity: 0 }}
+                        className={clsx(
+                            "text-xs font-bold uppercase tracking-widest absolute w-full",
+                            stage === 'gathering' ? "text-slate-400" :
+                            stage === 'packing' ? "text-amber-600" :
+                            stage === 'sealing' ? "text-amber-600" :
+                            "text-indigo-600"
+                        )}
+                    >
+                        {stage === 'gathering' && "Collecting Assets..."}
+                        {stage === 'packing' && "Packing Knowledge..."}
+                        {stage === 'sealing' && "Sealing Package..."}
+                        {stage === 'processing' && "AI Processing..."}
+                    </motion.p>
+                </AnimatePresence>
+             </div>
+         )}
       </div>
 
     </div>
