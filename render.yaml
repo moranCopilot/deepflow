@@ -8,4 +8,6 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false
+      - key: LISTENHUB_API_KEY
+        sync: false
     autoDeploy: false
