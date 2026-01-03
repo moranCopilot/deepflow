@@ -27,7 +27,7 @@ export interface KnowledgeCard {
     timestamp: Date;
     triggerTime?: number; // 在逐字稿中的触发时间（秒）
     triggerSubtitleIndex?: number; // 关联的字幕索引
-    source?: 'generated' | 'ai_realtime'; // 来源标识
+    source?: 'generated' | 'ai_realtime' | 'ai_realtime_fallback'; // 来源标识
 }
 
 type ContentCategory = {
@@ -177,6 +177,9 @@ const HISTORY_KEYWORDS = [
 const CATEGORY_SEPARATOR_REGEX = /[\s/|,，、;；&+·\-–—~]+/g;
 
 const ASSIGNABLE_SLOTS = SLOT_DEFINITIONS.filter((slot) => !slot.isFixedPush && !slot.isFallback);
+const ASSIGNABLE_SLOT_INDEX = new Map<SlotId, number>(
+  ASSIGNABLE_SLOTS.map((slot, index) => [slot.id, index])
+);
 const DEFAULT_SLOT_ID: SlotId = SLOT_DEFINITIONS.find((slot) => slot.isFallback)?.id || 'default_slot';
 
 const normalizeContentCategory = (raw: unknown): ContentCategory => {
@@ -274,6 +277,7 @@ export function SupplyDepotApp({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentInputType, setCurrentInputType] = useState<string>('');
+  const slotCursorRef = useRef(-1);
   const defaultCompletionTimersRef = useRef<number[]>([]);
   const defaultCompletionScheduledRef = useRef(false);
 
@@ -325,6 +329,11 @@ export function SupplyDepotApp({
   const [communityDetailListId, setCommunityDetailListId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<string>('');
+  const [streamingStatus, setStreamingStatus] = useState<{
+    stage: 'preparing' | 'uploading' | 'connecting_ai' | 'analyzing' | 'generating_title' | 'generating_script' | 'generating_cards';
+    text: string;
+    scriptItems: Array<{speaker: string, text: string}>;
+  } | undefined>(undefined);
   const [readyToFlow, setReadyToFlow] = useState(false);
   const [selectedItem, setSelectedItem] = useState<FlowItem | null>(null);
   const [showInputPanel, setShowInputPanel] = useState(false);
@@ -346,6 +355,7 @@ export function SupplyDepotApp({
     }
 
     setCommunityDetailListId(list.id);
+    slotCursorRef.current = -1;
     const slotCountMap = new Map<SlotId, number>();
     const getSlotCount = (slotId: SlotId): number => slotCountMap.get(slotId) ?? 0;
     const bumpSlotCount = (slotId: SlotId) => slotCountMap.set(slotId, getSlotCount(slotId) + 1);
@@ -397,6 +407,12 @@ export function SupplyDepotApp({
     }
   }, [flowItems]);
 
+  useEffect(() => {
+    if (flowItems.length === 0) {
+      slotCursorRef.current = -1;
+    }
+  }, [flowItems.length]);
+
   // 今日复盘相关状态
   // const [hasTriggeredReview, setHasTriggeredReview] = useState(false);
 
@@ -431,26 +447,43 @@ export function SupplyDepotApp({
       return itemSlotId === slotId ? count + 1 : count;
     }, 0);
 
-  const selectSlotForItem = (item: FlowItem, getSlotCount: (slotId: SlotId) => number): SlotId => {
+  const selectSlotForItem = (
+    item: FlowItem,
+    getSlotCount: (slotId: SlotId) => number,
+    cursorRef: { current: number } = slotCursorRef
+  ): SlotId => {
     const matchingSlots = ASSIGNABLE_SLOTS.filter((slot) => matchesAssignableSlot(slot, item));
 
     if (matchingSlots.length === 0) {
       return DEFAULT_SLOT_ID;
     }
 
-    let selectedSlot = matchingSlots[0];
-    let minCount = getSlotCount(selectedSlot.id);
+    const firstEmptySlot = matchingSlots.find((slot) => getSlotCount(slot.id) === 0);
+    if (firstEmptySlot) {
+      const index = ASSIGNABLE_SLOT_INDEX.get(firstEmptySlot.id);
+      if (typeof index === 'number') {
+        cursorRef.current = index;
+      }
+      return firstEmptySlot.id;
+    }
 
-    for (let index = 1; index < matchingSlots.length; index += 1) {
-      const candidate = matchingSlots[index];
-      const candidateCount = getSlotCount(candidate.id);
-      if (candidateCount < minCount) {
-        selectedSlot = candidate;
-        minCount = candidateCount;
+    const candidateIds = new Set(matchingSlots.map((slot) => slot.id));
+    const totalSlots = ASSIGNABLE_SLOTS.length;
+    const startIndex = ((cursorRef.current ?? -1) + 1 + totalSlots) % totalSlots;
+    for (let offset = 0; offset < totalSlots; offset += 1) {
+      const index = (startIndex + offset) % totalSlots;
+      const slot = ASSIGNABLE_SLOTS[index];
+      if (candidateIds.has(slot.id)) {
+        cursorRef.current = index;
+        return slot.id;
       }
     }
 
-    return selectedSlot.id;
+    const fallbackIndex = ASSIGNABLE_SLOT_INDEX.get(matchingSlots[0].id);
+    if (typeof fallbackIndex === 'number') {
+      cursorRef.current = fallbackIndex;
+    }
+    return matchingSlots[0].id;
   };
 
   const assignSlotIdForItem = (item: FlowItem): SlotId => {
@@ -1275,25 +1308,20 @@ export function SupplyDepotApp({
   const [isLiveMode, setIsLiveMode] = useState(false);
   // Handle real-time knowledge cards from AI
   const handleRealtimeKnowledgeCard = (card: any) => {
-    console.log('[SupplyDepotApp] handleRealtimeKnowledgeCard called with:', card);
-    
     const knowledgeCard: KnowledgeCard = {
       id: Math.random().toString(36).slice(2, 11),
       title: card.title,
       content: card.content,
       tags: card.tags || [],
       timestamp: new Date(),
-      source: 'ai_realtime'
+      source: card.source || 'ai_realtime'
     };
-    
-    console.log('[SupplyDepotApp] Created knowledge card:', knowledgeCard);
     
     // Add to knowledge cards
     onUpdateKnowledgeCards(prev => [knowledgeCard, ...prev]);
     
     // Trigger print immediately for real-time cards
     if (onPrintTrigger) {
-      console.log('[SupplyDepotApp] Calling onPrintTrigger with card:', knowledgeCard);
       onPrintTrigger(knowledgeCard);
     } else {
       console.warn('[SupplyDepotApp] onPrintTrigger is not available!');
@@ -1304,7 +1332,6 @@ export function SupplyDepotApp({
       selectedItem?.script?.map(s => `${s.speaker}: ${s.text}`).join('\n') || '',
       selectedItem?.knowledgeCards || [],
       () => {
-          console.log("Live Connected");
           if (selectedItem) {
               setFlowItems(prev => prev.map(item => {
                   if (item.id === selectedItem.id) {
@@ -1323,7 +1350,6 @@ export function SupplyDepotApp({
           }
       },
       () => {
-          console.log("Live Disconnected");
           setIsLiveMode(false);
       },
       (error) => {
@@ -2893,6 +2919,9 @@ export function SupplyDepotApp({
     if (rawInputs.length === 0) return;
     
     const maxRetries = 2;
+    if (retryCount === 0) {
+      setStreamingStatus(undefined);
+    }
     setIsGenerating(true);
     setGenerationProgress(retryCount > 0 ? `重试中 (${retryCount}/${maxRetries})...` : '正在处理文件...');
 
@@ -2985,8 +3014,12 @@ export function SupplyDepotApp({
           }
         }
         
-        // 压缩文件（如果需要）
         setGenerationProgress('正在检查和压缩文件...');
+        setStreamingStatus(prev => prev && retryCount > 0 ? prev : {
+          stage: 'preparing',
+          text: '正在检查和压缩文件...',
+          scriptItems: []
+        });
         const processedFiles: File[] = [];
         
         for (const file of selectedFiles) {
@@ -2999,6 +3032,11 @@ export function SupplyDepotApp({
         }
 
         setGenerationProgress('正在上传文件...');
+        setStreamingStatus(prev => prev && retryCount > 0 ? prev : {
+          stage: 'uploading',
+          text: '正在上传文件到服务器...',
+          scriptItems: []
+        });
         const formData = new FormData();
         processedFiles.forEach(file => {
             formData.append('files', file);
@@ -3008,6 +3046,11 @@ export function SupplyDepotApp({
         formData.append('preferences', JSON.stringify(generationPreferences));
 
         setGenerationProgress(retryCount > 0 ? `重试中 (${retryCount}/${maxRetries})...` : '正在分析内容...');
+        setStreamingStatus(prev => prev && retryCount > 0 ? prev : {
+          stage: 'connecting_ai',
+          text: '正在连接 Gemini 模型...',
+          scriptItems: []
+        });
         
         // Use the new API with timeout
         const controller = new AbortController();
@@ -3073,6 +3116,13 @@ export function SupplyDepotApp({
         const decoder = new TextDecoder();
         let accumulatedText = '';
         
+        // Initialize streaming status
+        setStreamingStatus({
+            stage: 'analyzing',
+            text: '正在分析内容...',
+            scriptItems: []
+        });
+
         if (reader) {
             try {
                 while (true) {
@@ -3082,12 +3132,59 @@ export function SupplyDepotApp({
                     const chunk = decoder.decode(value, { stream: true });
                     accumulatedText += chunk;
                     
+                    // Analyze stage and content
+                    let currentStage: 'analyzing' | 'generating_title' | 'generating_script' | 'generating_cards' = 'analyzing';
+                    
+                    if (accumulatedText.includes('"knowledgeCards"')) {
+                        currentStage = 'generating_cards';
+                    } else if (accumulatedText.includes('"podcastScript"')) {
+                        currentStage = 'generating_script';
+                    } else if (accumulatedText.includes('"title"')) {
+                        currentStage = 'generating_title';
+                    }
+
+                    // Extract script items
+                    // Look for {"speaker": "...", "text": "..."} pattern
+                    // We use a regex that handles escaped quotes and newlines in text
+                    const scriptRegex = /\{\s*"speaker"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\[\s\S])*)"\s*\}/g;
+                    const scriptItems: Array<{speaker: string, text: string}> = [];
+                    let match;
+                    
+                    // We only care about script items if we are in or past the script generation stage
+                    // AND strictly inside the podcastScript array to avoid parsing prompt examples or hallucinations
+                    const scriptKeyIndex = accumulatedText.indexOf('"podcastScript"');
+                    
+                    if (scriptKeyIndex !== -1) {
+                        // Find the start of the array '[' after "podcastScript"
+                        const arrayStartIndex = accumulatedText.indexOf('[', scriptKeyIndex);
+                        
+                        if (arrayStartIndex !== -1) {
+                             // Only parse content AFTER the array starts
+                             const validScriptContent = accumulatedText.slice(arrayStartIndex);
+                             
+                             while ((match = scriptRegex.exec(validScriptContent)) !== null) {
+                                scriptItems.push({
+                                    speaker: match[1],
+                                    text: match[2].replace(/\\"/g, '"').replace(/\\n/g, '\n') // Unescape quotes and newlines
+                                });
+                            }
+                        }
+                    }
+
+                    setStreamingStatus({
+                        stage: currentStage,
+                        text: `正在生成内容... (${accumulatedText.length} 字符)`,
+                        scriptItems
+                    });
+                    
                     // Update progress to show liveness
                     setGenerationProgress(`正在生成内容... (${accumulatedText.length} 字符)`);
                 }
             } catch (streamError) {
                 console.error("Stream reading error:", streamError);
-                throw new Error("STREAM_ERROR");
+                // Don't throw error immediately, try to process what we have
+                // This handles cases where backend connection closes prematurely but we might have enough data
+                console.log("Attempting to recover from stream error with accumulated text...");
             }
         } else {
             // Fallback for non-streaming response (should not happen with new backend)
@@ -3326,7 +3423,7 @@ export function SupplyDepotApp({
 
   const renderInputPanel = () => {
     if (isGenerating) {
-        return <PackingAnimation fileNames={selectedFiles.map(f => f.name)} />;
+        return <PackingAnimation fileNames={selectedFiles.map(f => f.name)} streamingStatus={streamingStatus} />;
     }
 
     return (
@@ -3343,7 +3440,7 @@ export function SupplyDepotApp({
                 <div className="w-10 h-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center">
                     <FileText size={20} />
                 </div>
-                <span className="text-[10px] font-medium text-slate-600">导入</span>
+                <span className="text-[10px] font-medium text-slate-600">文件</span>
             </button>
             <button onClick={() => addRawInput('录音')} className="flex flex-col items-center gap-2 p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 transition-colors active:scale-95">
                 <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">

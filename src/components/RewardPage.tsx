@@ -103,18 +103,33 @@ export function RewardPage({ stats, totalHours, updateStats }: RewardPageProps) 
     <div className="h-full bg-[#F2F2F7] flex flex-col">
       {/* 顶部标题 */}
       <div className="sticky top-0 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-200 z-10">
-        <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-          <Sparkles size={24} className="text-indigo-500" />
-          激励体系
-        </h2>
-        <span className="text-xs text-slate-400">学习成长记录</span>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+              <Sparkles size={24} className="text-indigo-500" />
+              激励体系
+            </h2>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-400">学习成长记录</span>
+            <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={debugMode} 
+                onChange={e => setDebugMode(e.target.checked)}
+                className="rounded text-indigo-500 focus:ring-indigo-500" 
+              />
+              调试模式 (预览各阶段)
+            </label>
+          </div>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto no-scrollbar p-4 pb-28 space-y-4">
+      <div className="flex-1 overflow-y-auto no-scrollbar px-4 pt-3 pb-20 space-y-3">
         {/* 主题切换和养成游戏区域 */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-2xl p-3 shadow-sm border border-slate-100">
           {/* Theme Switcher & Controls */}
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100/50">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-slate-100/50">
             {/* Theme Switcher - Compact Segmented Control */}
             <div className="flex bg-slate-100 p-1 rounded-lg">
               <button
@@ -173,19 +188,6 @@ export function RewardPage({ stats, totalHours, updateStats }: RewardPageProps) 
               mousePos={mousePos}
             />
           )}
-          
-          {/* 调试模式开关 */}
-          <div className="mt-4 pt-4 border-t border-slate-100">
-            <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={debugMode} 
-                onChange={e => setDebugMode(e.target.checked)}
-                className="rounded text-indigo-500 focus:ring-indigo-500" 
-              />
-              调试模式 (预览各阶段)
-            </label>
-          </div>
         </div>
 
         {/* 核心数据概览 */}
@@ -220,7 +222,7 @@ export function RewardPage({ stats, totalHours, updateStats }: RewardPageProps) 
         </div>
 
         {/* 详细统计 */}
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 space-y-4">
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-4">
           <h3 className="font-bold text-slate-800 flex items-center gap-2">
             <Award size={18} className="text-orange-500" />
             详细统计
@@ -265,7 +267,7 @@ export function RewardPage({ stats, totalHours, updateStats }: RewardPageProps) 
         <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-slate-100">
           <button 
             onClick={() => setShowHistory(!showHistory)}
-            className="w-full flex items-center justify-between p-5 hover:bg-slate-50 transition-colors"
+            className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors"
           >
             <h3 className="font-bold text-slate-800 flex items-center gap-2">
               <History size={18} className="text-slate-500" />

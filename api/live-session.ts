@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getGeminiApiKey } from './config-helper.js';
 import { WebSocket } from 'ws';
 
@@ -11,12 +12,414 @@ interface Session {
   isActive: boolean;
   script: string;
   knowledgeCards: any[];
+  pendingKnowledgeCards: KnowledgeCard[];
+  transcriptHistory: Array<{ source: 'input' | 'output'; text: string; timestamp: number }>;
+  pendingPrintIntent: ReturnType<typeof setTimeout> | null;
+  printIntentCounter: number;
+  lastFunctionCallAt: number | null;
+  lastPrintIntentAt: number | null;
+  lastFallbackAt: number | null;
+  hasSentInitialPrompt: boolean;
 }
 
 const sessions = new Map<string, Session>();
 
 // Track accumulated text for each session to handle streaming responses
 const sessionTextBuffers = new Map<string, string>();
+
+type KnowledgeCard = {
+  type: 'knowledgeCard';
+  title: string;
+  content: string;
+  tags: string[];
+  source?: 'ai_realtime_fallback';
+};
+
+type FunctionCall = {
+  id?: string;
+  name?: string;
+  args?: any;
+};
+
+const PRINT_KEYWORDS = ['已为你整理', '打印', '知识卡片', '知识小票', 'print job', 'printing', 'print'];
+const PRINT_FALLBACK_DELAY_MS = 5200;
+
+function normalizeText(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+function hasPrintKeyword(text: string): boolean {
+  const normalized = normalizeText(text);
+  if (!normalized) {
+    return false;
+  }
+  return PRINT_KEYWORDS.some((keyword) => normalized.includes(keyword.toLowerCase()));
+}
+
+function addTranscriptEntry(
+  session: Session,
+  source: 'input' | 'output',
+  text: string
+) {
+  const normalized = text.trim();
+  if (!normalized) {
+    return;
+  }
+  if (!session.transcriptHistory) {
+    session.transcriptHistory = [];
+  }
+  session.transcriptHistory.push({
+    source,
+    text: normalized,
+    timestamp: Date.now()
+  });
+  if (session.transcriptHistory.length > 20) {
+    session.transcriptHistory = session.transcriptHistory.slice(-20);
+  }
+}
+
+function getLatestTranscript(session: Session, source: 'input' | 'output'): string | null {
+  if (!session.transcriptHistory || session.transcriptHistory.length === 0) {
+    return null;
+  }
+  for (let index = session.transcriptHistory.length - 1; index >= 0; index -= 1) {
+    if (session.transcriptHistory[index].source === source) {
+      return session.transcriptHistory[index].text;
+    }
+  }
+  return null;
+}
+
+let fallbackModel: any = null;
+
+function ensureSourceTag(content: string): string {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return 'Source: 实时对话';
+  }
+  return trimmed.includes('Source: 实时对话') ? trimmed : `${trimmed} Source: 实时对话`;
+}
+
+function buildKnowledgeCardFromGenerated(
+  raw: any,
+  fallbackText: string
+): KnowledgeCard {
+  const titleCandidate = typeof raw?.title === 'string' ? raw.title.trim() : '';
+  const contentCandidate = typeof raw?.content === 'string' ? raw.content.trim() : '';
+  const tagsCandidate = Array.isArray(raw?.tags) ? raw.tags : [];
+
+  const title = titleCandidate || '知识要点';
+  const contentBase = contentCandidate || fallbackText || '暂无明确知识点，记录当前对话要点。';
+  const content = ensureSourceTag(contentBase);
+  const tags = tagsCandidate
+    .filter((tag: unknown) => typeof tag === 'string' && tag.trim().length > 0)
+    .slice(0, 5);
+
+  return {
+    type: 'knowledgeCard',
+    title,
+    content: content.length > 220 ? `${content.slice(0, 220)}...` : content,
+    tags: tags.length > 0 ? tags : ['对话', '要点']
+  };
+}
+
+function sendInitialPromptIfNeeded(sessionId: string, geminiWs: WebSocket) {
+  const session = sessions.get(sessionId);
+  if (!session || session.hasSentInitialPrompt) {
+    return;
+  }
+  session.hasSentInitialPrompt = true;
+  const initialPrompt = '请直接开始实时练习并说第一句话，不要询问我是否准备好。';
+  geminiWs.send(JSON.stringify({
+    client_content: {
+      turns: [{
+        role: 'user',
+        parts: [{ text: initialPrompt }]
+      }],
+      turn_complete: true
+    }
+  }));
+}
+
+async function generateKnowledgeCardFromTranscript(
+  session: Session,
+  fallbackText: string
+): Promise<KnowledgeCard> {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    const card = buildKnowledgeCardFromGenerated(null, fallbackText);
+    card.source = 'ai_realtime_fallback';
+    return card;
+  }
+
+  if (!fallbackModel) {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+  }
+
+  const history = session.transcriptHistory || [];
+  const recent = history.slice(-12);
+  const conversationText = recent
+    .map((entry) => `${entry.source === 'input' ? '用户' : 'AI'}: ${entry.text}`)
+    .join('\n');
+
+  const prompt = `你是一位学习助手。请从以下实时对话中提取一个明确、具体的知识点，生成一张知识小票。
+
+对话：
+${conversationText || fallbackText}
+
+要求：
+1. 只提取具体事实性知识点（概念/定义/公式/关键方法）
+2. 一张卡片只包含一个概念
+3. title 简短（<=20字）
+4. content 简洁（<=200字），必须包含 “Source: 实时对话”
+5. 输出 JSON，格式：
+{
+  "title": "知识点标题",
+  "content": "知识点内容... Source: 实时对话",
+  "tags": ["标签1", "标签2"]
+}
+只输出 JSON，不要额外文字。`;
+
+  try {
+    const result = await fallbackModel.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+    const card = buildKnowledgeCardFromGenerated(parsed, fallbackText);
+    card.source = 'ai_realtime_fallback';
+    return card;
+  } catch (error) {
+    const card = buildKnowledgeCardFromGenerated(null, fallbackText);
+    card.source = 'ai_realtime_fallback';
+    return card;
+  }
+}
+
+function schedulePrintFallback(
+  sessionId: string,
+  session: Session,
+  res: any,
+  triggerText: string
+) {
+  if (!hasPrintKeyword(triggerText)) {
+    return;
+  }
+
+  const now = Date.now();
+  session.lastPrintIntentAt = now;
+  session.printIntentCounter = (session.printIntentCounter ?? 0) + 1;
+  const intentId = session.printIntentCounter;
+
+  if (session.pendingPrintIntent) {
+    clearTimeout(session.pendingPrintIntent);
+    session.pendingPrintIntent = null;
+  }
+
+  session.pendingPrintIntent = setTimeout(() => {
+    const currentSession = sessions.get(sessionId);
+    if (!currentSession) {
+      return;
+    }
+    if (currentSession.printIntentCounter !== intentId) {
+      return;
+    }
+    if (currentSession.lastFunctionCallAt && currentSession.lastFunctionCallAt >= now) {
+      return;
+    }
+    if (currentSession.lastFallbackAt && Date.now() - currentSession.lastFallbackAt < 3000) {
+      return;
+    }
+
+    const outputText = getLatestTranscript(currentSession, 'output') || triggerText;
+    const trimmed = outputText.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    void (async () => {
+      if (currentSession.lastFunctionCallAt && currentSession.lastFunctionCallAt >= now) {
+        return;
+      }
+      currentSession.lastFallbackAt = Date.now();
+      const knowledgeCard = await generateKnowledgeCardFromTranscript(currentSession, trimmed);
+      const sent = trySendKnowledgeCard(sessionId, currentSession, res, knowledgeCard);
+      if (!sent) {
+        console.warn(`[${sessionId}] Print intent fallback queued`);
+      } else {
+        console.warn(`[${sessionId}] Print intent fallback triggered`);
+      }
+    })();
+  }, PRINT_FALLBACK_DELAY_MS);
+}
+
+function extractFunctionCalls(message: any): FunctionCall[] {
+  const calls: FunctionCall[] = [];
+
+  const pushCall = (call: any) => {
+    if (call && (call.name || call.functionName)) {
+      calls.push({
+        id: call.id,
+        name: call.name || call.functionName,
+        args: call.args ?? call.arguments ?? call.params
+      });
+    }
+  };
+
+  if (Array.isArray(message?.toolCall?.functionCalls)) {
+    message.toolCall.functionCalls.forEach((call: any) => pushCall(call));
+  }
+
+  if (message?.serverContent?.modelTurn?.functionCall) {
+    pushCall(message.serverContent.modelTurn.functionCall);
+  }
+
+  if (Array.isArray(message?.serverContent?.modelTurn?.parts)) {
+    message.serverContent.modelTurn.parts.forEach((part: any) => {
+      if (part?.functionCall) {
+        pushCall(part.functionCall);
+      }
+    });
+  }
+
+  if (Array.isArray(message?.candidates)) {
+    message.candidates.forEach((candidate: any) => {
+      if (Array.isArray(candidate?.content?.parts)) {
+        candidate.content.parts.forEach((part: any) => {
+          if (part?.functionCall) {
+            pushCall(part.functionCall);
+          }
+        });
+      }
+    });
+  }
+
+  return calls;
+}
+
+function normalizeArgsObject(raw: any): { content?: string; type?: string } | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+  const content = raw.content ?? raw.text ?? raw.note ?? raw.value;
+  const type = raw.type ?? raw.category ?? raw.kind;
+  return {
+    content: typeof content === 'string' ? content.trim() : content != null ? String(content).trim() : undefined,
+    type: typeof type === 'string' ? type.trim() : undefined
+  };
+}
+
+function parseFunctionArgs(raw: any): { content?: string; type?: string } | null {
+  if (raw == null) {
+    return null;
+  }
+
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const jsonCandidates = [trimmed];
+    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+    if (jsonMatch && jsonMatch[0] !== trimmed) {
+      jsonCandidates.push(jsonMatch[0]);
+    }
+
+    for (const candidate of jsonCandidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        const normalized = normalizeArgsObject(parsed);
+        if (normalized) {
+          return normalized;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const contentMatch = trimmed.match(/content\s*[:=]\s*["']?([\s\S]*?)["']?(?:,|$)/i);
+    const typeMatch = trimmed.match(/type\s*[:=]\s*["']?([a-zA-Z_-]+)["']?/i);
+    if (contentMatch) {
+      return {
+        content: contentMatch[1].trim(),
+        type: typeMatch?.[1]?.trim()
+      };
+    }
+
+    return { content: trimmed };
+  }
+
+  return normalizeArgsObject(raw);
+}
+
+function buildKnowledgeCard(content: string, type?: string): KnowledgeCard {
+  const normalizedType = typeof type === 'string' ? type.toLowerCase() : 'fact';
+  const typeKey = normalizedType === 'formula' || normalizedType === 'definition' || normalizedType === 'summary'
+    ? normalizedType
+    : 'fact';
+  const titleMap: Record<string, string> = {
+    formula: '数学公式',
+    definition: '核心定义',
+    fact: '知识点',
+    summary: '精彩摘要'
+  };
+  const tagsMap: Record<string, string[]> = {
+    formula: ['数学', '公式'],
+    definition: ['定义'],
+    fact: ['知识点'],
+    summary: ['摘要']
+  };
+  const normalizedContent = content.includes('Source: 实时对话')
+    ? content
+    : `${content} Source: 实时对话`;
+
+  return {
+    type: 'knowledgeCard',
+    title: titleMap[typeKey],
+    content: normalizedContent,
+    tags: tagsMap[typeKey]
+  };
+}
+
+function enqueueKnowledgeCard(session: Session, card: KnowledgeCard) {
+  if (!session.pendingKnowledgeCards) {
+    session.pendingKnowledgeCards = [];
+  }
+  session.pendingKnowledgeCards.push(card);
+}
+
+function trySendKnowledgeCard(sessionId: string, session: Session, res: any, card: KnowledgeCard): boolean {
+  if (res.writableEnded || res.destroyed) {
+    enqueueKnowledgeCard(session, card);
+    return false;
+  }
+  try {
+    res.write(`data: ${JSON.stringify({ type: 'knowledgeCard', card })}\n\n`);
+    return true;
+  } catch (writeError) {
+    console.error(`[${sessionId}] Failed to write knowledge card SSE data:`, writeError);
+    enqueueKnowledgeCard(session, card);
+    return false;
+  }
+}
+
+function flushPendingKnowledgeCards(sessionId: string, session: Session, res: any) {
+  if (!session.pendingKnowledgeCards || session.pendingKnowledgeCards.length === 0) {
+    return;
+  }
+  const pending = [...session.pendingKnowledgeCards];
+  session.pendingKnowledgeCards = [];
+  for (let index = 0; index < pending.length; index += 1) {
+    const card = pending[index];
+    const sent = trySendKnowledgeCard(sessionId, session, res, card);
+    if (!sent) {
+      session.pendingKnowledgeCards = [card, ...pending.slice(index + 1)];
+      break;
+    }
+  }
+}
 
 // Cleanup old sessions (older than 5 minutes)
 setInterval(() => {
@@ -72,6 +475,12 @@ function createGeminiConnection(sessionId: string, script: string, knowledgeCard
             }
           }]
         }],
+        tool_config: {
+          function_calling_config: {
+            mode: "AUTO",
+            allowed_function_names: ["autoPrintNote"]
+          }
+        },
         generation_config: {
           response_modalities: ["AUDIO"], // Audio mode for voice responses
           speech_config: {
@@ -152,6 +561,7 @@ ${script}
 
 【知识卡片生成方式 - 使用函数调用】
 当检测到用户犹豫或重要内容时，请调用 autoPrintNote 函数生成知识卡片。
+只要你在对话中提到“打印 / 知识卡片 / 知识小票 / print”，必须同步调用 autoPrintNote。
 
 函数参数说明：
 - content: 要打印的知识内容（如数学公式、化学方程式或核心定义），内容必须简洁明了，适合小票尺寸
@@ -173,8 +583,8 @@ ${script}
         }
       }
     };
-    console.log(`[${sessionId}] Using model: ${modelName}`);
     geminiWs.send(JSON.stringify(setupMsg));
+    sendInitialPromptIfNeeded(sessionId, geminiWs);
   });
 
   geminiWs.on('error', (err) => {
@@ -183,7 +593,6 @@ ${script}
 
   geminiWs.on('close', (code, reason) => {
     const reasonStr = reason.toString();
-    console.log(`[${sessionId}] Gemini Connection Closed:`, code, reasonStr);
     
     // Check if it's a model-related error
     if (code === 400 && (reasonStr.includes('model') || reasonStr.includes('invalid'))) {
@@ -252,84 +661,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const message = JSON.parse(data.toString());
         
-        // Debug: Log full message structure for troubleshooting
-        if (message.serverContent) {
-          console.log(`[${sessionId}] ServerContent structure:`, {
-            hasModelTurn: !!message.serverContent.modelTurn,
-            hasPartial: !!message.serverContent.modelTurn?.partial,
-            partsCount: message.serverContent.modelTurn?.parts?.length || 0,
-            hasFunctionCall: !!message.serverContent.modelTurn?.functionCall,
-            messageKeys: Object.keys(message)
-          });
-        }
-        
-        // Handle Function Calls (Tool Use) - Check message.toolCall (as per competitor code)
-        if (message.toolCall?.functionCalls) {
-          for (const fc of message.toolCall.functionCalls) {
-            if (fc.name === 'autoPrintNote') {
-              try {
-                const args = typeof fc.args === 'string' 
-                  ? JSON.parse(fc.args) 
-                  : fc.args;
-                
-                // Extract content and type from args (competitor format)
-                const { content, type } = args;
-                
-                if (content) {
-                  // Convert to our knowledge card format
-                  const knowledgeCard = {
-                    type: 'knowledgeCard',
-                    title: type === 'formula' ? '数学公式' : type === 'definition' ? '核心定义' : type === 'fact' ? '知识点' : '精彩摘要',
-                    content: content + ' Source: 实时对话',
-                    tags: type === 'formula' ? ['数学', '公式'] : type === 'definition' ? ['定义'] : type === 'fact' ? ['知识点'] : ['摘要']
-                  };
-                  
-                  // Send knowledge card via SSE
-                  try {
-                    res.write(`data: ${JSON.stringify({ 
-                      type: 'knowledgeCard',
-                      card: knowledgeCard
-                    })}\n\n`);
-                    console.log(`[${sessionId}] Knowledge card generated via function call:`, knowledgeCard.title);
-                  } catch (writeError) {
-                    console.error(`[${sessionId}] Failed to write knowledge card SSE data:`, writeError);
-                  }
-                  
-                  // Send function response back to Gemini (as per competitor code)
-                  if (session.geminiWs && session.geminiWs.readyState === WebSocket.OPEN) {
-                    session.geminiWs.send(JSON.stringify({
-                      toolResponse: {
-                        functionResponses: [{
-                          id: fc.id,
-                          name: fc.name,
-                          response: { result: "已打印" }
-                        }]
-                      }
-                    }));
-                    console.log(`[${sessionId}] Sent function response to Gemini`);
-                  }
-                } else {
-                  console.warn(`[${sessionId}] Function call missing content:`, args);
+        // Handle Function Calls (Tool Use) - Check all possible locations
+        const functionCalls = extractFunctionCalls(message);
+        if (functionCalls.length > 0) {
+          const callNames = functionCalls
+            .map((call) => call.name)
+            .filter((name) => Boolean(name))
+            .join(', ');
+          console.log(`[${sessionId}] Function call detected`, callNames ? `: ${callNames}` : '');
+          const seenCalls = new Set<string>();
+          for (const fc of functionCalls) {
+            const callKey = fc.id
+              ? `id:${fc.id}`
+              : `name:${fc.name || 'unknown'}|args:${JSON.stringify(fc.args ?? {})}`;
+            if (seenCalls.has(callKey)) {
+              continue;
+            }
+            seenCalls.add(callKey);
+
+            if (fc.name !== 'autoPrintNote') {
+              continue;
+            }
+
+            const parsedArgs = parseFunctionArgs(fc.args);
+            const content = parsedArgs?.content;
+            const type = parsedArgs?.type;
+
+            if (!content) {
+              console.warn(`[${sessionId}] Function call missing content:`, fc.args);
+              continue;
+            }
+
+            session.lastFunctionCallAt = Date.now();
+            const knowledgeCard = buildKnowledgeCard(content, type);
+            const sent = trySendKnowledgeCard(sessionId, session, res, knowledgeCard);
+            if (sent) {
+              console.log(`[${sessionId}] Knowledge card generated via function call:`, knowledgeCard.title);
+            } else {
+              console.warn(`[${sessionId}] SSE not writable, queued knowledge card:`, knowledgeCard.title);
+            }
+
+            // Send function response back to Gemini
+            if (session.geminiWs && session.geminiWs.readyState === WebSocket.OPEN) {
+              session.geminiWs.send(JSON.stringify({
+                toolResponse: {
+                  functionResponses: [{
+                    id: fc.id,
+                    name: fc.name,
+                    response: { result: "已打印" }
+                  }]
                 }
-              } catch (parseError) {
-                console.error(`[${sessionId}] Failed to parse function call args:`, parseError);
-              }
+              }));
             }
           }
-        }
-        
-        // Also check legacy locations for backward compatibility
-        if (message.serverContent?.modelTurn?.functionCall) {
-          const functionCall = message.serverContent.modelTurn.functionCall;
-          console.log(`[${sessionId}] Legacy function call found in serverContent.modelTurn.functionCall:`, functionCall.name);
-          // Handle legacy format if needed
         }
         
         // Handle transcription (as per competitor code)
         if (message.serverContent?.inputTranscription) {
           const transcription = message.serverContent.inputTranscription;
-          console.log(`[${sessionId}] Input transcription:`, transcription.text || transcription);
           // Send transcription to client for display
+          if (transcription?.text || typeof transcription === 'string') {
+            addTranscriptEntry(session, 'input', transcription.text || transcription);
+          }
           try {
             res.write(`data: ${JSON.stringify({ 
               type: 'transcription',
@@ -343,13 +736,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         if (message.serverContent?.outputTranscription) {
           const transcription = message.serverContent.outputTranscription;
-          console.log(`[${sessionId}] Output transcription:`, transcription.text || transcription);
           // Send transcription to client for display
+          const outputText = transcription?.text || transcription;
+          if (outputText) {
+            addTranscriptEntry(session, 'output', outputText);
+            schedulePrintFallback(sessionId, session, res, outputText);
+          }
           try {
             res.write(`data: ${JSON.stringify({ 
               type: 'transcription',
               source: 'output',
-              text: transcription.text || transcription
+              text: outputText
             })}\n\n`);
           } catch (writeError) {
             console.error(`[${sessionId}] Failed to write transcription SSE data:`, writeError);
@@ -365,9 +762,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const newBuffer = currentBuffer + partialText;
           sessionTextBuffers.set(sessionId, newBuffer);
           
-          console.log(`[${sessionId}] Partial text received (buffer length: ${newBuffer.length}):`, partialText.substring(0, 100));
-          
-          // Check if we have a complete knowledge card in the accumulated buffer
+        // Check if we have a complete knowledge card in the accumulated buffer
           const knowledgeCardMatch = newBuffer.match(/\[KNOWLEDGE_CARD_START\]([\s\S]*?)\[KNOWLEDGE_CARD_END\]/);
           if (knowledgeCardMatch) {
             try {
@@ -387,14 +782,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     type: 'knowledgeCard',
                     card: knowledgeCard
                   })}\n\n`);
-                  console.log(`[${sessionId}] Knowledge card generated from partial:`, knowledgeCard.title);
                 } catch (writeError) {
                   console.error(`[${sessionId}] Failed to write knowledge card SSE data:`, writeError);
                 }
               }
             } catch (parseError) {
               // JSON might be incomplete, keep accumulating
-              console.log(`[${sessionId}] JSON incomplete, continuing to accumulate...`);
             }
           }
         }
@@ -406,8 +799,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               // Send audio chunk via SSE
               try {
                 const audioDataLength = part.inlineData.data?.length || 0;
-                console.log(`[${sessionId}] Sending audio chunk, mimeType: ${part.inlineData.mimeType}, data length: ${audioDataLength}`);
-                res.write(`data: ${JSON.stringify({ 
+            res.write(`data: ${JSON.stringify({ 
                   type: 'audio',
                   data: part.inlineData.data,
                   mimeType: part.inlineData.mimeType || 'audio/pcm;rate=24000'
@@ -418,8 +810,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             } else if (part.text) {
               // Check for knowledge card in complete text response
               const text = part.text;
-              console.log(`[${sessionId}] Complete text part received (length: ${text.length}):`, text.substring(0, 200));
-              
+              // Forward output text as transcription for UI/fallback
+              addTranscriptEntry(session, 'output', text);
+              schedulePrintFallback(sessionId, session, res, text);
+              try {
+                res.write(`data: ${JSON.stringify({ 
+                  type: 'transcription',
+                  source: 'output',
+                  text
+                })}\n\n`);
+              } catch (writeError) {
+                console.error(`[${sessionId}] Failed to write transcription SSE data:`, writeError);
+              }
               // Also add to buffer for potential streaming scenarios
               const currentBuffer = sessionTextBuffers.get(sessionId) || '';
               const combinedText = currentBuffer + text;
@@ -446,7 +848,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         type: 'knowledgeCard',
                         card: knowledgeCard
                       })}\n\n`);
-                      console.log(`[${sessionId}] Knowledge card generated and sent:`, knowledgeCard.title);
                     } catch (writeError) {
                       console.error(`[${sessionId}] Failed to write knowledge card SSE data:`, writeError);
                     }
@@ -461,9 +862,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 // Store in buffer if markers not found yet (might be streaming)
                 if (text.includes('[KNOWLEDGE_CARD_START]') || currentBuffer.includes('[KNOWLEDGE_CARD_START]')) {
                   sessionTextBuffers.set(sessionId, combinedText);
-                  console.log(`[${sessionId}] Knowledge card start found, accumulating text (buffer: ${combinedText.length} chars)`);
-                } else if (text.length > 50) {
-                  console.log(`[${sessionId}] Text received but no knowledge card markers found`);
                 }
               }
             }
@@ -477,9 +875,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               for (const part of candidate.content.parts) {
                 if (part.text) {
                   const text = part.text;
-                  console.log(`[${sessionId}] Text found in candidates:`, text.substring(0, 200));
-                  
-                  const knowledgeCardMatch = text.match(/\[KNOWLEDGE_CARD_START\]([\s\S]*?)\[KNOWLEDGE_CARD_END\]/);
+              const knowledgeCardMatch = text.match(/\[KNOWLEDGE_CARD_START\]([\s\S]*?)\[KNOWLEDGE_CARD_END\]/);
                   
                   if (knowledgeCardMatch) {
                     try {
@@ -496,7 +892,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             type: 'knowledgeCard',
                             card: knowledgeCard
                           })}\n\n`);
-                          console.log(`[${sessionId}] Knowledge card generated from candidates:`, knowledgeCard.title);
                         } catch (writeError) {
                           console.error(`[${sessionId}] Failed to write knowledge card SSE data:`, writeError);
                         }
@@ -597,12 +992,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       
       if (connectionSuccess) {
         res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
+        flushPendingKnowledgeCards(sessionId, session, res);
       }
     } else {
       // Reuse existing connection - remove old listeners first to prevent duplicates
       session.geminiWs.removeAllListeners('message');
       session.geminiWs.on('message', handleGeminiMessage);
       res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`);
+      flushPendingKnowledgeCards(sessionId, session, res);
     }
 
     // Send queued audio chunks
@@ -622,10 +1019,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Handle client disconnect
     req.on('close', () => {
-      console.log(`[${sessionId}] SSE connection closed`);
       // Clean up text buffer
       sessionTextBuffers.delete(sessionId);
       session.isActive = false;
+      if (session.pendingPrintIntent) {
+        clearTimeout(session.pendingPrintIntent);
+        session.pendingPrintIntent = null;
+      }
       // Don't close Gemini connection immediately, keep it for a bit
     });
 
@@ -637,6 +1037,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Cleanup on close
     req.on('close', () => {
       clearInterval(keepAlive);
+      if (session.pendingPrintIntent) {
+        clearTimeout(session.pendingPrintIntent);
+        session.pendingPrintIntent = null;
+      }
     });
 
     return;
@@ -658,7 +1062,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         audioQueue: [],
         isActive: false,
         script: script,
-        knowledgeCards: knowledgeCards || []
+        knowledgeCards: knowledgeCards || [],
+        pendingKnowledgeCards: [],
+        transcriptHistory: [],
+        pendingPrintIntent: null,
+        printIntentCounter: 0,
+        lastFunctionCallAt: null,
+        lastPrintIntentAt: null,
+        lastFallbackAt: null,
+        hasSentInitialPrompt: false
       };
 
       sessions.set(sessionId, session);
@@ -704,6 +1116,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // Remove all listeners before closing
           session.geminiWs.removeAllListeners();
           session.geminiWs.close();
+        }
+        if (session.pendingPrintIntent) {
+          clearTimeout(session.pendingPrintIntent);
+          session.pendingPrintIntent = null;
         }
         sessions.delete(sessionId);
       }
