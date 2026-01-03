@@ -170,8 +170,8 @@ app.post('/api/tts', async (req, res): Promise<any> => {
 
     try {
         // 导入任务管理（使用动态导入避免在 Vercel 环境中的问题）
-        const { generateTaskId, createTask } = await import('../api/tts-task-manager.js');
-        const { processTTSAsync } = await import('../api/tts-processor.js');
+        const { generateTaskId, createTask } = await import('./tts-task-manager.js');
+        const { processTTSAsync } = await import('./tts-processor.js');
 
         // 创建任务
         const taskId = generateTaskId();
@@ -203,7 +203,7 @@ app.get('/api/tts', async (req, res): Promise<any> => {
     }
 
     try {
-        const { getTask } = await import('../api/tts-task-manager.js');
+        const { getTask } = await import('./tts-task-manager.js');
         const task = getTask(taskId);
         
         if (!task) {
