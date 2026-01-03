@@ -499,7 +499,9 @@ app.post('/api/analyze', upload.array('files'), async (req, res): Promise<any> =
               console.error(`Failed to convert ${originalName}:`, conversionError);
               
               // Clean up the original file since we failed
-              fs.unlinkSync(file.path);
+              if (fs.existsSync(file.path)) {
+                  fs.unlinkSync(file.path);
+              }
 
               // Throw error to stop processing this request or just skip this file?
               // Better to inform frontend, but for now let's skip this file and let others proceed if any.
