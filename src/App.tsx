@@ -88,6 +88,17 @@ function App() {
   const [availableSlots, setAvailableSlots] = useState<SlotId[]>([]);
   const [environmentCycleIndex, setEnvironmentCycleIndex] = useState<number>(-1);
   const [environmentSwitchToken, setEnvironmentSwitchToken] = useState<number>(0);
+  const [hasReadGuide, setHasReadGuide] = useState(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('deepflow_guide_read_status') === 'true';
+    }
+    return false;
+  });
+
+  const handleGuideClick = () => {
+    setHasReadGuide(true);
+    localStorage.setItem('deepflow_guide_read_status', 'true');
+  };
   
   // Scene background management
   const sceneBackground = useSceneBackground(currentSceneTag);
@@ -536,18 +547,28 @@ function App() {
               className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-neutral-50 rounded-full border border-neutral-200 shadow-sm hover:shadow transition-all group"
             >
               <Download size={18} className="text-neutral-500 group-hover:text-indigo-600 transition-colors" />
-              <span className="text-sm font-medium text-neutral-600 group-hover:text-neutral-900">下载文件体验包</span>
+              <span className="text-sm font-medium text-neutral-600 group-hover:text-neutral-900">文件体验包</span>
             </a>
             
             <a 
               href="https://gamma.app/docs/DeepFlow-Station-2wwpdsu2agcl1km" 
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-neutral-50 rounded-full border border-neutral-200 shadow-sm hover:shadow transition-all group"
-            >
-              <Presentation size={18} className="text-neutral-500 group-hover:text-indigo-600 transition-colors" />
-              <span className="text-sm font-medium text-neutral-600 group-hover:text-neutral-900">项目说明书</span>
-            </a>
+              onClick={handleGuideClick}
+               className={clsx(
+                 "relative flex items-center gap-2 px-5 py-2.5 rounded-full shadow-sm hover:shadow transition-all group",
+                 "bg-purple-50 hover:bg-purple-100 border border-purple-200"
+               )}
+             >
+               <Presentation size={18} className="text-purple-500 group-hover:text-purple-700 transition-colors" />
+               <span className="text-sm font-medium text-purple-700 group-hover:text-purple-900">项目说明书</span>
+               {!hasReadGuide && (
+                 <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                   <span className="animate-ping-5 absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                   <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                 </span>
+               )}
+             </a>
           </div>
         </header>
 
