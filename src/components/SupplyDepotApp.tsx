@@ -81,6 +81,8 @@ export interface FlowPlaybackState {
   duration?: number; // 音频总时长（秒）
   subtitleStartTime?: number; // 当前字幕的开始时间（秒）
   subtitleEndTime?: number; // 当前字幕的结束时间（秒）
+  currentItemId?: string; // 当前播放项 ID
+  currentItemKnowledgeCards?: KnowledgeCard[]; // 当前播放项的知识卡片
 }
 
 interface SupplyDepotAppProps {
@@ -100,6 +102,7 @@ interface SupplyDepotAppProps {
   onPlaybackStateChange?: (state: FlowPlaybackState) => void;
   onPrintTrigger?: (card: KnowledgeCard) => void;
   onTranscription?: (transcription: { source: 'input' | 'output'; text: string }) => void;
+  onDetailViewExit?: () => void;
   externalInputFile?: File | null;
   externalAudioFile?: File | null;
   onEnvironmentActivate?: (sceneTag: SceneTag) => void; // 环境激活回调，用于获取可播放项和播放方法
@@ -211,7 +214,74 @@ const normalizeMainCategory = (contentCategory?: ContentCategory | string): stri
   return contentCategory.main?.trim();
 };
 
-const sanitizeJsonString = (value: string): string => value.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+const sanitizeJsonString = (value: string): string => {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+
+    if (!inString) {
+      if (ch === '"') {
+        inString = true;
+      }
+      result += ch;
+      continue;
+    }
+
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      const next = value[i + 1];
+      if (next === undefined) {
+        result += '\\\\';
+        continue;
+      }
+
+      if (next === 'u') {
+        const hex = value.slice(i + 2, i + 6);
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+          result += '\\\\';
+          continue;
+        }
+      }
+
+      if (next === '"' || next === '\\' || next === '/' || next === 'b' || next === 'f' || next === 'n' || next === 'r' || next === 't' || next === 'u') {
+        result += ch;
+        escaped = true;
+        continue;
+      }
+
+      result += '\\\\';
+      continue;
+    }
+
+    if (ch === '\n') {
+      result += '\\n';
+      continue;
+    }
+
+    if (ch === '\r') {
+      result += '\\r';
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = false;
+      result += ch;
+      continue;
+    }
+
+    result += ch;
+  }
+
+  return result;
+};
 
 const normalizeCategoryValue = (value: string): string => value.toLowerCase().replace(CATEGORY_SEPARATOR_REGEX, '');
 
@@ -270,6 +340,7 @@ export function SupplyDepotApp({
   onPlaybackStateChange,
   onPrintTrigger,
   onTranscription,
+  onDetailViewExit,
   externalInputFile,
   externalAudioFile
 }: SupplyDepotAppProps) {
@@ -345,6 +416,14 @@ export function SupplyDepotApp({
   const rewardSystem = useRewardSystem();
   const { isSessionActive, sessionStartTime, distractionCount, startSession, endSession, checkDistraction, stats, totalHours, updateStats } = rewardSystem;
   const hlsRef = useRef<Hls | null>(null);
+  const prevSelectedItemRef = useRef<FlowItem | null>(null);
+
+  useEffect(() => {
+    if (prevSelectedItemRef.current && !selectedItem) {
+      onDetailViewExit?.();
+    }
+    prevSelectedItemRef.current = selectedItem;
+  }, [selectedItem, onDetailViewExit]);
 
   const handleImportFlowList = (list: SharedFlowList) => {
     if (!list.items || list.items.length === 0) return;
@@ -1780,8 +1859,9 @@ export function SupplyDepotApp({
     };
   }, [currentPlayingItem, currentTime, duration]);
 
-  // Track printed cards to avoid duplicate printing
-  const printedCardsRef = useRef<Set<string>>(new Set());
+  // 自动打印：按播放项去重 + 记录上一次触发时间
+  const autoPrintedByItemRef = useRef<Map<string, Set<string>>>(new Map());
+  const prevAutoPrintTimeByItemRef = useRef<Map<string, number>>(new Map());
 
   // Sync playback state - 支持详情页播放和 go flow 模式
   const prevPlaybackStateRef = useRef<string>('');
@@ -1789,6 +1869,7 @@ export function SupplyDepotApp({
     if (onPlaybackStateChange) {
          // 优先使用 currentPlayingItem，如果没有则使用 selectedItem（详情页播放）
          const activeItem = currentPlayingItem || selectedItem;
+         const currentItem = currentPlayingItem;
          
          // 如果 activeItem 有字幕，使用它的字幕信息
          let subtitleText = '';
@@ -1833,25 +1914,50 @@ export function SupplyDepotApp({
              currentTime: currentTime,
              duration: duration,
              subtitleStartTime: finalStartTime,
-             subtitleEndTime: finalEndTime
+             subtitleEndTime: finalEndTime,
+             currentItemId: currentItem?.id,
+             currentItemKnowledgeCards: currentItem?.knowledgeCards
          };
 
-         const newStateStr = JSON.stringify(newPlaybackState);
+         const knowledgeCardSignature = currentItem?.knowledgeCards
+           ? currentItem.knowledgeCards
+               .map(card => `${card.id}:${card.triggerTime ?? 'na'}`)
+               .join('|')
+           : '';
+         const newStateStr = JSON.stringify({
+           ...newPlaybackState,
+           currentItemKnowledgeCards: knowledgeCardSignature
+         });
          if (prevPlaybackStateRef.current !== newStateStr) {
              onPlaybackStateChange(newPlaybackState);
              prevPlaybackStateRef.current = newStateStr;
          }
 
          // Check for knowledge cards that should trigger printing
-         if (activeItem?.knowledgeCards && currentTime !== undefined && onPrintTrigger) {
-           activeItem.knowledgeCards.forEach(card => {
-             if (card.triggerTime !== undefined && 
-                 !printedCardsRef.current.has(card.id) &&
-                 Math.abs(currentTime - card.triggerTime) < 0.5) { // 0.5秒容差
+         if (currentItem?.knowledgeCards && currentTime !== undefined && onPrintTrigger) {
+           const itemId = currentItem.id;
+           const prevTime = prevAutoPrintTimeByItemRef.current.get(itemId);
+           if (prevTime === undefined || currentTime < prevTime) {
+             prevAutoPrintTimeByItemRef.current.set(itemId, currentTime);
+             return;
+           }
+
+           let printedSet = autoPrintedByItemRef.current.get(itemId);
+           if (!printedSet) {
+             printedSet = new Set();
+             autoPrintedByItemRef.current.set(itemId, printedSet);
+           }
+
+           const toleranceSeconds = 0.5;
+           currentItem.knowledgeCards.forEach(card => {
+             if (card.triggerTime === undefined) return;
+             if (printedSet!.has(card.id)) return;
+             if (card.triggerTime >= prevTime - toleranceSeconds && card.triggerTime <= currentTime + toleranceSeconds) {
                onPrintTrigger(card);
-               printedCardsRef.current.add(card.id);
+               printedSet!.add(card.id);
              }
            });
+           prevAutoPrintTimeByItemRef.current.set(itemId, currentTime);
          }
      }
   }, [isMainAudioPlaying, currentSubtitle, currentSubtitleInfo, currentPlayingItem, selectedItem, isLiveMode, currentTime, duration, onPlaybackStateChange, onPrintTrigger]);
@@ -2063,6 +2169,8 @@ export function SupplyDepotApp({
     const requestId = ++playRequestIdRef.current;
     const isActiveRequest = () => playRequestIdRef.current === requestId;
     console.log('[PlayAudio] Starting for item:', item.id, item.contentType, 'userInitiated:', userInitiated);
+
+    setCurrentPlayingItem(item);
 
     const skipResume = options.skipResume === true;
     const savedProgress = !skipResume ? getSavedProgressForItem(item) : null;
@@ -2941,7 +3049,6 @@ export function SupplyDepotApp({
               console.log('[Cache] 使用缓存的 FlowItem');
               const preparedCachedItem = prepareFlowItem(cachedFlowItem, { assignSlot: true });
               
-              // 模拟生成流程的 loading（3-5 秒）
               setGenerationProgress('正在处理文件...');
               await new Promise(resolve => setTimeout(resolve, 800));
               
@@ -2957,20 +3064,16 @@ export function SupplyDepotApp({
               setGenerationProgress('正在处理结果...');
               await new Promise(resolve => setTimeout(resolve, 400));
               
-              // 延迟后显示结果
               setIsGenerating(false);
               setGenerationProgress('');
               
-              // 直接使用缓存的 flowItem
               let shouldScheduleDefaults = false;
               setFlowItems(prev => {
-                // 检查是否已存在（避免重复添加）
                 const exists = prev.some(item => item.id === preparedCachedItem.id);
                 if (exists) {
                   return prev;
                 }
                 
-                // 检查是否为首次生成 (当列表为空时，视为从 0 到 1 的生成)
                 const isFirstGeneration = prev.length === 0;
                 if (isFirstGeneration) {
                   console.log('[Cache] 首次生成，添加默认 items');
@@ -2981,15 +3084,13 @@ export function SupplyDepotApp({
                 
                 return [...prev, preparedCachedItem];
               });
-
+ 
               if (shouldScheduleDefaults) {
                 scheduleDefaultItemsCompletion();
               }
               
-              // 如果有知识卡片，也更新
               if (preparedCachedItem.knowledgeCards && preparedCachedItem.knowledgeCards.length > 0) {
                 onUpdateKnowledgeCards(prev => {
-                  // 合并知识卡片，避免重复
                   const existingIds = new Set(prev.map((card: KnowledgeCard) => card.id));
                   const newCards = preparedCachedItem.knowledgeCards!
                     .filter((card: KnowledgeCard) => !existingIds.has(card.id))
@@ -3001,12 +3102,13 @@ export function SupplyDepotApp({
                 });
               }
               
-              // 清理已处理的输入
               setArchivedInputs(prev => [...prev, ...rawInputs]);
               setRawInputs([]);
               setSelectedFiles([]);
+              setReadyToFlow(true);
+              setShowInputPanel(false);
               
-              return; // 使用缓存，跳过正常流程
+              return;
             }
           } catch (error) {
             console.error('[Cache] 检查缓存失败:', error);

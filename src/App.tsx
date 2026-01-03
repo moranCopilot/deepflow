@@ -201,7 +201,7 @@ function App() {
   const [demoPrintedContents, setDemoPrintedContents] = useState<Array<{ id: string; content: string; timestamp: number }>>([]);
   const [demoPrintIndex, setDemoPrintIndex] = useState(0); // Demo小票的打印索引
   const [conversationHistory, setConversationHistory] = useState<Array<{ source: 'input' | 'output'; text: string; timestamp: number }>>([]);
-  const [printedCardIds, setPrintedCardIds] = useState<Set<string>>(new Set());
+  const [manualPrintedByItemId, setManualPrintedByItemId] = useState<Map<string, Set<string>>>(new Map());
   const conversationHistoryRef = useRef<Array<{ source: 'input' | 'output'; text: string; timestamp: number }>>([]);
   const fallbackTimerRef = useRef<number | null>(null);
   const fallbackPendingRef = useRef<{
@@ -221,8 +221,12 @@ function App() {
     // 重置Demo小票和已打印卡片记录
     setDemoPrintedContents([]);
     setDemoPrintIndex(0);
-    setPrintedCardIds(new Set());
+    setManualPrintedByItemId(new Map());
   };
+
+  const handleDetailViewExit = useCallback(() => {
+    setPrintedContents([]);
+  }, []);
 
   // 当音频开始播放时，清除Demo小票
   useEffect(() => {
@@ -472,40 +476,51 @@ function App() {
 
   // 处理打印机按钮点击（三种模式）
   const handlePrintButtonClick = async () => {
-    // 情况1：Demo模式 - 无音频播放
-    if (!playbackState?.isPlaying) {
-      // 如果已经打印完所有Demo小票（3张），第四次点击时重置
-      if (demoPrintIndex >= MOCK_DEMO_CONTENTS.length) {
-        setDemoPrintedContents([]);
-        setDemoPrintIndex(0);
+    const playbackMode = playbackState?.playbackMode;
+
+    // 情况1：音频播放模式
+    if (playbackMode === 'audio' && playbackState?.currentItemId) {
+      const currentItemId = playbackState.currentItemId;
+      const currentItemCards = playbackState.currentItemKnowledgeCards;
+      if (!currentItemId || !currentItemCards || currentItemCards.length === 0) {
         return;
       }
-      
-      // 每次点击打印一张Demo小票
-      const nextCard = MOCK_DEMO_CONTENTS[demoPrintIndex];
-      setDemoPrintedContents(prev => [...prev, {
-        ...nextCard,
-        timestamp: Date.now() // 更新时间为当前时间，确保动画效果
-      }]);
-      setDemoPrintIndex(prev => prev + 1);
-      return;
-    }
 
-    // 情况2：音频播放模式
-    if (playbackState.playbackMode === 'audio') {
-      // 找到第一个未打印的知识卡片
-      const unprintedCard = knowledgeCards.find(
-        card => !printedCardIds.has(card.id)
-      );
-      if (unprintedCard) {
-        handlePrintTrigger(unprintedCard);
-        setPrintedCardIds(prev => new Set(prev).add(unprintedCard.id));
+      const sortedCards = [...currentItemCards].sort((a, b) => {
+        const timeA = a.triggerTime ?? Number.POSITIVE_INFINITY;
+        const timeB = b.triggerTime ?? Number.POSITIVE_INFINITY;
+        return timeA - timeB;
+      });
+      const currentTime = playbackState.currentTime ?? 0;
+      const manualPrintedSet = manualPrintedByItemId.get(currentItemId) ?? new Set<string>();
+
+      let nextCard = sortedCards.find(card => {
+        const triggerTime = card.triggerTime ?? Number.POSITIVE_INFINITY;
+        return !manualPrintedSet.has(card.id) && triggerTime <= currentTime;
+      });
+
+      if (!nextCard) {
+        nextCard = sortedCards.find(card => {
+          const triggerTime = card.triggerTime ?? Number.POSITIVE_INFINITY;
+          return !manualPrintedSet.has(card.id) && triggerTime > currentTime;
+        });
+      }
+
+      if (nextCard) {
+        handlePrintTrigger(nextCard);
+        setManualPrintedByItemId(prev => {
+          const next = new Map(prev);
+          const nextSet = new Set(next.get(currentItemId) ?? []);
+          nextSet.add(nextCard.id);
+          next.set(currentItemId, nextSet);
+          return next;
+        });
       }
       return;
     }
 
-    // 情况3：实时对话模式
-    if (playbackState.playbackMode === 'live') {
+    // 情况2：实时对话模式
+    if (playbackMode === 'live') {
       // 确保有对话历史
       if (conversationHistory.length === 0) {
         return;
@@ -520,6 +535,23 @@ function App() {
       }
       return;
     }
+
+    // 情况3：Demo模式 - 无音频播放
+    // 如果已经打印完所有Demo小票（3张），第四次点击时重置
+    if (demoPrintIndex >= MOCK_DEMO_CONTENTS.length) {
+      setDemoPrintedContents([]);
+      setDemoPrintIndex(0);
+      return;
+    }
+    
+    // 每次点击打印一张Demo小票
+    const nextCard = MOCK_DEMO_CONTENTS[demoPrintIndex];
+    setDemoPrintedContents(prev => [...prev, {
+      ...nextCard,
+      timestamp: Date.now() // 更新时间为当前时间，确保动画效果
+    }]);
+    setDemoPrintIndex(prev => prev + 1);
+    return;
   };
 
   return (
@@ -590,6 +622,7 @@ function App() {
                       onPlaybackStateChange={setPlaybackState}
                       onPrintTrigger={handlePrintTrigger}
                       onTranscription={setTranscription}
+                      onDetailViewExit={handleDetailViewExit}
                       externalInputFile={capturedFile}
                       externalAudioFile={uploadedAudioFile}
                       onAvailableSlotsChange={setAvailableSlots}
