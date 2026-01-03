@@ -177,6 +177,9 @@ const HISTORY_KEYWORDS = [
 const CATEGORY_SEPARATOR_REGEX = /[\s/|,，、;；&+·\-–—~]+/g;
 
 const ASSIGNABLE_SLOTS = SLOT_DEFINITIONS.filter((slot) => !slot.isFixedPush && !slot.isFallback);
+const ASSIGNABLE_SLOT_INDEX = new Map<SlotId, number>(
+  ASSIGNABLE_SLOTS.map((slot, index) => [slot.id, index])
+);
 const DEFAULT_SLOT_ID: SlotId = SLOT_DEFINITIONS.find((slot) => slot.isFallback)?.id || 'default_slot';
 
 const normalizeContentCategory = (raw: unknown): ContentCategory => {
@@ -274,6 +277,7 @@ export function SupplyDepotApp({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentInputType, setCurrentInputType] = useState<string>('');
+  const slotCursorRef = useRef(-1);
   const defaultCompletionTimersRef = useRef<number[]>([]);
   const defaultCompletionScheduledRef = useRef(false);
 
@@ -351,6 +355,7 @@ export function SupplyDepotApp({
     }
 
     setCommunityDetailListId(list.id);
+    slotCursorRef.current = -1;
     const slotCountMap = new Map<SlotId, number>();
     const getSlotCount = (slotId: SlotId): number => slotCountMap.get(slotId) ?? 0;
     const bumpSlotCount = (slotId: SlotId) => slotCountMap.set(slotId, getSlotCount(slotId) + 1);
@@ -402,6 +407,12 @@ export function SupplyDepotApp({
     }
   }, [flowItems]);
 
+  useEffect(() => {
+    if (flowItems.length === 0) {
+      slotCursorRef.current = -1;
+    }
+  }, [flowItems.length]);
+
   // 今日复盘相关状态
   // const [hasTriggeredReview, setHasTriggeredReview] = useState(false);
 
@@ -436,26 +447,43 @@ export function SupplyDepotApp({
       return itemSlotId === slotId ? count + 1 : count;
     }, 0);
 
-  const selectSlotForItem = (item: FlowItem, getSlotCount: (slotId: SlotId) => number): SlotId => {
+  const selectSlotForItem = (
+    item: FlowItem,
+    getSlotCount: (slotId: SlotId) => number,
+    cursorRef: { current: number } = slotCursorRef
+  ): SlotId => {
     const matchingSlots = ASSIGNABLE_SLOTS.filter((slot) => matchesAssignableSlot(slot, item));
 
     if (matchingSlots.length === 0) {
       return DEFAULT_SLOT_ID;
     }
 
-    let selectedSlot = matchingSlots[0];
-    let minCount = getSlotCount(selectedSlot.id);
+    const firstEmptySlot = matchingSlots.find((slot) => getSlotCount(slot.id) === 0);
+    if (firstEmptySlot) {
+      const index = ASSIGNABLE_SLOT_INDEX.get(firstEmptySlot.id);
+      if (typeof index === 'number') {
+        cursorRef.current = index;
+      }
+      return firstEmptySlot.id;
+    }
 
-    for (let index = 1; index < matchingSlots.length; index += 1) {
-      const candidate = matchingSlots[index];
-      const candidateCount = getSlotCount(candidate.id);
-      if (candidateCount < minCount) {
-        selectedSlot = candidate;
-        minCount = candidateCount;
+    const candidateIds = new Set(matchingSlots.map((slot) => slot.id));
+    const totalSlots = ASSIGNABLE_SLOTS.length;
+    const startIndex = ((cursorRef.current ?? -1) + 1 + totalSlots) % totalSlots;
+    for (let offset = 0; offset < totalSlots; offset += 1) {
+      const index = (startIndex + offset) % totalSlots;
+      const slot = ASSIGNABLE_SLOTS[index];
+      if (candidateIds.has(slot.id)) {
+        cursorRef.current = index;
+        return slot.id;
       }
     }
 
-    return selectedSlot.id;
+    const fallbackIndex = ASSIGNABLE_SLOT_INDEX.get(matchingSlots[0].id);
+    if (typeof fallbackIndex === 'number') {
+      cursorRef.current = fallbackIndex;
+    }
+    return matchingSlots[0].id;
   };
 
   const assignSlotIdForItem = (item: FlowItem): SlotId => {
