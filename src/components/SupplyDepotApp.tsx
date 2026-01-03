@@ -1031,6 +1031,7 @@ export function SupplyDepotApp({
   const [copiedScript, setCopiedScript] = useState(false);
   const autoplayTimerRef = useRef<number | null>(null);
   const envAutoplayGateRef = useRef<{ introToken?: number; endsAt: number }>({ endsAt: 0 });
+  const fadeInTimerRef = useRef<number | null>(null);
   const lastHandledEnvSwitchTokenRef = useRef<number | undefined>(undefined);
 
   type MainPlaybackPhase = 'idle' | 'loading' | 'ready' | 'playing' | 'error';
@@ -1087,9 +1088,14 @@ export function SupplyDepotApp({
   type SavedMainAudioProgressStore = {
     version: 2;
     byKey: Record<string, SavedMainAudioProgress>;
+    byItemId?: Record<string, SavedMainAudioProgress>;
     recentKeys: string[];
+    recentItemIds?: string[];
     lastGlobalKey?: string;
     lastByScene: Partial<Record<SceneTag, string>>;
+    lastGlobalItemId?: string;
+    lastBySceneItemId?: Partial<Record<SceneTag, string>>;
+    lastBySlotId?: Partial<Record<SlotId, string>>;
     updatedAt: number;
   };
 
@@ -1149,7 +1155,9 @@ export function SupplyDepotApp({
   const defaultProgressStore = (): SavedMainAudioProgressStore => ({
     version: 2,
     byKey: {},
+    byItemId: {},
     recentKeys: [],
+    recentItemIds: [],
     lastByScene: {},
     updatedAt: Date.now()
   });
@@ -1163,16 +1171,34 @@ export function SupplyDepotApp({
       if (parsed.version !== 2) return defaultProgressStore();
       const byKey = parsed.byKey && typeof parsed.byKey === 'object' ? (parsed.byKey as Record<string, SavedMainAudioProgress>) : {};
       const recentKeys = Array.isArray(parsed.recentKeys) ? parsed.recentKeys.filter((k) => typeof k === 'string') : [];
+      const byItemId =
+        parsed.byItemId && typeof parsed.byItemId === 'object' ? (parsed.byItemId as Record<string, SavedMainAudioProgress>) : {};
+      const recentItemIds = Array.isArray(parsed.recentItemIds)
+        ? parsed.recentItemIds.filter((id) => typeof id === 'string')
+        : [];
       const lastByScene =
         parsed.lastByScene && typeof parsed.lastByScene === 'object'
           ? (parsed.lastByScene as Partial<Record<SceneTag, string>>)
           : {};
+      const lastBySceneItemId =
+        parsed.lastBySceneItemId && typeof parsed.lastBySceneItemId === 'object'
+          ? (parsed.lastBySceneItemId as Partial<Record<SceneTag, string>>)
+          : {};
+      const lastBySlotId =
+        parsed.lastBySlotId && typeof parsed.lastBySlotId === 'object'
+          ? (parsed.lastBySlotId as Partial<Record<SlotId, string>>)
+          : {};
       return {
         version: 2,
         byKey,
+        byItemId,
         recentKeys,
+        recentItemIds,
         lastGlobalKey: typeof parsed.lastGlobalKey === 'string' ? parsed.lastGlobalKey : undefined,
         lastByScene,
+        lastGlobalItemId: typeof parsed.lastGlobalItemId === 'string' ? parsed.lastGlobalItemId : undefined,
+        lastBySceneItemId,
+        lastBySlotId,
         updatedAt: typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt) ? parsed.updatedAt : Date.now()
       };
     } catch {
@@ -1193,6 +1219,23 @@ export function SupplyDepotApp({
     const store = readProgressStore();
     const existing = store.byKey[contentKey];
     if (existing && existing.contentKey === contentKey) return existing;
+
+    const byItem = store.byItemId?.[item.id];
+    if (byItem) {
+      const adjusted: SavedMainAudioProgress = {
+        ...byItem,
+        contentKey,
+        itemId: item.id
+      };
+      if (byItem.contentKey !== contentKey) {
+        store.byKey[contentKey] = adjusted;
+        store.lastGlobalKey = contentKey;
+        store.lastByScene[adjusted.sceneTag] = contentKey;
+        store.recentKeys = [contentKey, ...store.recentKeys.filter((k) => k !== contentKey)].slice(0, 20);
+        writeProgressStore(store);
+      }
+      return adjusted;
+    }
 
     // One-time migration path from v1 (itemId-based) when possible.
     const legacy = readSavedMainAudioProgressV1();
@@ -1225,12 +1268,70 @@ export function SupplyDepotApp({
     return null;
   };
 
+  const findItemById = (itemId: string): FlowItem | null => {
+    return flowItems.find((item) => item.id === itemId) || null;
+  };
+
   const shouldResumeFromProgress = (progress: { time: number; duration?: number }) => {
     const minResumeSeconds = 5;
     const tailGuardSeconds = 10;
     if (progress.time < minResumeSeconds) return false;
     if (progress.duration && progress.duration - progress.time < tailGuardSeconds) return false;
     return true;
+  };
+
+  const isPlayableItem = (item: FlowItem) => {
+    return (item.script && item.script.length > 0 || item.audioUrl) && item.contentType !== 'interactive';
+  };
+
+  const pickResumeItem = (options: { slotId?: SlotId | null; sceneTag?: SceneTag }) => {
+    const store = readProgressStore();
+    const seen = new Set<string>();
+    const candidateIds: string[] = [];
+    const pushId = (itemId?: string) => {
+      if (!itemId || seen.has(itemId)) return;
+      seen.add(itemId);
+      candidateIds.push(itemId);
+    };
+
+    if (options.slotId && store.lastBySlotId?.[options.slotId]) {
+      pushId(store.lastBySlotId[options.slotId]);
+    }
+    if (options.sceneTag && store.lastBySceneItemId?.[options.sceneTag]) {
+      pushId(store.lastBySceneItemId[options.sceneTag]);
+    }
+    pushId(store.lastGlobalItemId);
+    (store.recentItemIds || []).forEach(pushId);
+
+    for (const itemId of candidateIds) {
+      const item = findItemById(itemId);
+      if (!item) continue;
+      if (options.slotId && item.slotId !== options.slotId) continue;
+      if (!isPlayableItem(item)) continue;
+      const savedProgress = getSavedProgressForItem(item);
+      if (savedProgress && shouldResumeFromProgress(savedProgress)) {
+        return item;
+      }
+    }
+
+    const candidateKeys = [
+      store.lastGlobalKey,
+      options.sceneTag ? store.lastByScene[options.sceneTag] : undefined,
+      ...(store.recentKeys || [])
+    ].filter((k): k is string => typeof k === 'string' && k.length > 0);
+
+    for (const key of candidateKeys) {
+      const item = findItemByContentKey(key);
+      if (!item) continue;
+      if (options.slotId && item.slotId !== options.slotId) continue;
+      if (!isPlayableItem(item)) continue;
+      const savedProgress = getSavedProgressForItem(item);
+      if (savedProgress && shouldResumeFromProgress(savedProgress)) {
+        return item;
+      }
+    }
+
+    return null;
   };
 
   const persistMainAudioProgress = (mode: 'throttled' | 'force') => {
@@ -1249,7 +1350,7 @@ export function SupplyDepotApp({
     const partsHash = audioParts.length > 1 ? stableHash32(audioParts.join('|')) : undefined;
 
     const store = readProgressStore();
-    store.byKey[contentKey] = {
+    const progressRecord: SavedMainAudioProgress = {
       contentKey,
       itemId: activeItem.id,
       sceneTag,
@@ -1260,11 +1361,31 @@ export function SupplyDepotApp({
       partsCount,
       partsHash
     };
+    store.byKey[contentKey] = progressRecord;
+    if (!store.byItemId) {
+      store.byItemId = {};
+    }
+    store.byItemId[activeItem.id] = progressRecord;
     store.lastGlobalKey = contentKey;
     store.lastByScene[sceneTag] = contentKey;
+    store.lastGlobalItemId = activeItem.id;
+    if (!store.lastBySceneItemId) {
+      store.lastBySceneItemId = {};
+    }
+    store.lastBySceneItemId[sceneTag] = activeItem.id;
+    if (activeItem.slotId) {
+      if (!store.lastBySlotId) {
+        store.lastBySlotId = {};
+      }
+      store.lastBySlotId[activeItem.slotId] = activeItem.id;
+    }
     store.updatedAt = now;
 
     store.recentKeys = [contentKey, ...store.recentKeys.filter((k) => k !== contentKey)].slice(0, 20);
+    store.recentItemIds = [
+      activeItem.id,
+      ...(store.recentItemIds || []).filter((id) => id !== activeItem.id)
+    ].slice(0, 20);
     writeProgressStore(store);
   };
 
@@ -1359,8 +1480,12 @@ export function SupplyDepotApp({
       autoplayTimerRef.current = null;
     }
     envAutoplayGateRef.current = { endsAt: 0 };
+    clearFadeIn();
 
     stopMainAudioPlayback(mode);
+    if (audioRef.current) {
+      audioRef.current.volume = 1;
+    }
     setAudioError(null);
     setTTSProgress(null);
     setAudioUrl(null);
@@ -1495,6 +1620,34 @@ export function SupplyDepotApp({
     }
   }, [playbackRate]);
 
+  const clearFadeIn = () => {
+    if (fadeInTimerRef.current !== null) {
+      window.cancelAnimationFrame(fadeInTimerRef.current);
+      fadeInTimerRef.current = null;
+    }
+  };
+
+  const fadeInAudio = (durationMs: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    clearFadeIn();
+    const startTime = performance.now();
+    const startVolume = audio.volume;
+    const targetVolume = 1;
+
+    const step = (now: number) => {
+      const progress = Math.min((now - startTime) / durationMs, 1);
+      audio.volume = startVolume + (targetVolume - startVolume) * progress;
+      if (progress < 1) {
+        fadeInTimerRef.current = window.requestAnimationFrame(step);
+      } else {
+        fadeInTimerRef.current = null;
+      }
+    };
+
+    fadeInTimerRef.current = window.requestAnimationFrame(step);
+  };
+
   // Keep env autoplay gate in sync with the latest intro timing updates from parent.
   useEffect(() => {
     if (environmentIntroToken === undefined) return;
@@ -1515,6 +1668,7 @@ export function SupplyDepotApp({
       autoplayTimerRef.current = null;
     }
 
+    clearFadeIn();
     if (audioUrl && audioRef.current) {
       const canAutoplayNow = () => {
         const gateEndsAt = envAutoplayGateRef.current.endsAt;
@@ -1531,18 +1685,34 @@ export function SupplyDepotApp({
         }, delay);
       };
 
-      const tryPlay = () => {
+      const tryPlay = (withFadeIn: boolean) => {
         if (!audioRef.current) return;
+        if (withFadeIn) {
+          audioRef.current.volume = 0;
+        } else {
+          audioRef.current.volume = 1;
+        }
         const playPromise = audioRef.current.play();
         if (playPromise !== undefined) {
-          playPromise.catch((err) => {
+          playPromise
+            .then(() => {
+              if (withFadeIn) {
+                fadeInAudio(300);
+              }
+            })
+            .catch((err) => {
             if (err?.name === 'AbortError') {
               console.log('Play interrupted by new request');
               return;
             }
+            if (withFadeIn && audioRef.current) {
+              audioRef.current.volume = 1;
+            }
             console.error('Play failed:', err);
             setAudioError('播放失败，请重试');
           });
+        } else if (withFadeIn) {
+          fadeInAudio(300);
         }
       };
 
@@ -1550,7 +1720,7 @@ export function SupplyDepotApp({
         const expectedSessionId = mainPlaybackRef.current.sessionId;
         const expectedAudioUrl = audioUrl;
         if (canAutoplayNow()) {
-          tryPlay();
+          tryPlay(false);
         } else {
           scheduleAutoplay(() => {
             // Only autoplay if we are still on the same audioUrl / session.
@@ -1561,7 +1731,7 @@ export function SupplyDepotApp({
               requestAutoplay();
               return;
             }
-            tryPlay();
+            tryPlay(true);
           });
         }
       };
@@ -1612,6 +1782,7 @@ export function SupplyDepotApp({
     }
     
     return () => {
+        clearFadeIn();
         if (hlsRef.current) {
             hlsRef.current.destroy();
             hlsRef.current = null;
@@ -1980,29 +2151,24 @@ export function SupplyDepotApp({
           introToken: environmentIntroToken,
           endsAt: typeof environmentIntroEndsAt === 'number' && Number.isFinite(environmentIntroEndsAt) ? environmentIntroEndsAt : 0
         };
-      } else {
-        const store = readProgressStore();
-        const candidateKeys = [
-          store.lastGlobalKey,
-          store.lastByScene[currentSceneTag],
-          ...(store.recentKeys || [])
-        ].filter((k): k is string => typeof k === 'string' && k.length > 0);
+      }
 
-        for (const key of candidateKeys) {
-          const savedItem = findItemByContentKey(key);
-          const savedProgress = savedItem ? getSavedProgressForItem(savedItem) : null;
-          if (savedItem && savedProgress && shouldResumeFromProgress(savedProgress) && getPlayableItems([savedItem]).length > 0) {
-            if (savedItem.sceneTag && savedItem.sceneTag !== currentSceneTag) {
-              onSceneChange(savedItem.sceneTag);
-            }
-            setCurrentPlayingItem(savedItem);
-            setSelectedItem(savedItem);
-            handlePlayAudio(savedItem, false);
-            setHasAutoPlayed(true);
-            return;
-          }
+      const resumeItem = pickResumeItem({
+        slotId: envForced ? environmentSlotId : undefined,
+        sceneTag: currentSceneTag
+      });
+      if (resumeItem) {
+        if (resumeItem.sceneTag && resumeItem.sceneTag !== currentSceneTag) {
+          onSceneChange(resumeItem.sceneTag);
         }
+        setCurrentPlayingItem(resumeItem);
+        setSelectedItem(resumeItem);
+        handlePlayAudio(resumeItem, false);
+        setHasAutoPlayed(true);
+        return;
+      }
 
+      if (!envForced) {
         const legacy = readSavedMainAudioProgressV1();
         if (legacy && shouldResumeFromProgress(legacy)) {
           const legacyItem = flowItems.find((it) => it.id === legacy.itemId);
@@ -2061,13 +2227,23 @@ export function SupplyDepotApp({
       environmentSwitchToken !== undefined &&
       environmentSwitchToken !== lastHandledEnvSwitchTokenRef.current;
 
-    // Forced environment scene switch (restart immediately from beginning)
+    // Forced environment scene switch (respect resume when available)
     if (envForced) {
       lastHandledEnvSwitchTokenRef.current = environmentSwitchToken;
       envAutoplayGateRef.current = {
         introToken: environmentIntroToken,
         endsAt: typeof environmentIntroEndsAt === 'number' && Number.isFinite(environmentIntroEndsAt) ? environmentIntroEndsAt : 0
       };
+      const resumeItem = pickResumeItem({
+        slotId: environmentSlotId,
+        sceneTag: currentSceneTag
+      });
+      if (resumeItem) {
+        setCurrentPlayingItem(resumeItem);
+        setSelectedItem(resumeItem);
+        handlePlayAudio(resumeItem, false);
+        return;
+      }
       const playableItems = environmentSlotId
         ? getPlayableItemsBySlot(flowItems, environmentSlotId)
         : getPlayableItems(flowItems, currentSceneTag);
@@ -2075,7 +2251,7 @@ export function SupplyDepotApp({
         const firstItem = playableItems[0];
         setCurrentPlayingItem(firstItem);
         setSelectedItem(firstItem);
-        handlePlayAudio(firstItem, false, { skipResume: true });
+        handlePlayAudio(firstItem, false);
       }
       return;
     }
@@ -2691,6 +2867,7 @@ export function SupplyDepotApp({
           onLoadedMetadata={() => {
             if (audioRef.current) {
               setDuration(audioRef.current.duration || 0);
+              applyPendingSeekIfNeeded();
             }
           }}
           onTimeUpdate={() => {

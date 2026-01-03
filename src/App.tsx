@@ -88,6 +88,17 @@ function App() {
   const [availableSlots, setAvailableSlots] = useState<SlotId[]>([]);
   const [environmentCycleIndex, setEnvironmentCycleIndex] = useState<number>(-1);
   const [environmentSwitchToken, setEnvironmentSwitchToken] = useState<number>(0);
+  const [environmentIntroToken, setEnvironmentIntroToken] = useState<number | undefined>(undefined);
+  const [environmentIntroEndsAt, setEnvironmentIntroEndsAt] = useState<number | undefined>(undefined);
+  const environmentPromptAudioRef = useRef<HTMLAudioElement | null>(null);
+  const environmentIntroTokenRef = useRef<number | null>(null);
+  const environmentIntroFallbackTimerRef = useRef<number | null>(null);
+  const environmentPromptFadeTimerRef = useRef<number | null>(null);
+  const environmentPromptFadeRafRef = useRef<number | null>(null);
+
+  const PROMPT_CROSSFADE_MS = 350;
+  const PROMPT_POST_DELAY_MS = 3000;
+  const PROMPT_FALLBACK_MS = 20000;
   const [hasReadGuide, setHasReadGuide] = useState(() => {
     if (typeof localStorage !== 'undefined') {
       return localStorage.getItem('deepflow_guide_read_status') === 'true';
@@ -98,6 +109,38 @@ function App() {
   const handleGuideClick = () => {
     setHasReadGuide(true);
     localStorage.setItem('deepflow_guide_read_status', 'true');
+  };
+
+  const clearEnvironmentPromptFade = () => {
+    if (environmentPromptFadeTimerRef.current !== null) {
+      window.clearTimeout(environmentPromptFadeTimerRef.current);
+      environmentPromptFadeTimerRef.current = null;
+    }
+    if (environmentPromptFadeRafRef.current !== null) {
+      window.cancelAnimationFrame(environmentPromptFadeRafRef.current);
+      environmentPromptFadeRafRef.current = null;
+    }
+  };
+
+  const stopEnvironmentPromptAudio = () => {
+    clearEnvironmentPromptFade();
+    if (environmentPromptAudioRef.current) {
+      try {
+        environmentPromptAudioRef.current.pause();
+        environmentPromptAudioRef.current.currentTime = 0;
+        environmentPromptAudioRef.current.volume = 1;
+      } catch {
+        // ignore
+      }
+      environmentPromptAudioRef.current = null;
+    }
+    if (environmentIntroFallbackTimerRef.current) {
+      window.clearTimeout(environmentIntroFallbackTimerRef.current);
+      environmentIntroFallbackTimerRef.current = null;
+    }
+    environmentIntroTokenRef.current = null;
+    setEnvironmentIntroToken(undefined);
+    setEnvironmentIntroEndsAt(undefined);
   };
   
   // Scene background management
@@ -135,14 +178,18 @@ function App() {
     
     if (nextIndex === scenesWithBackground.length) {
       // 最后一次点击：关闭环境
-      setEnvironmentCycleIndex(-1);
-      sceneBackground.deactivate();
+      stopEnvironmentPromptAudio();
+      stopFlow();
       return;
     }
     
     const targetScene = scenesWithBackground[nextIndex];
     setEnvironmentCycleIndex(nextIndex);
-    setEnvironmentSwitchToken(Date.now());
+    const nextToken = Date.now();
+    setEnvironmentSwitchToken(nextToken);
+    setEnvironmentIntroToken(nextToken);
+    setEnvironmentIntroEndsAt(Date.now() + PROMPT_FALLBACK_MS);
+    environmentIntroTokenRef.current = nextToken;
     setCurrentSceneTag(targetScene);
     
     // 立即激活背景效果（不等待 useEffect）
@@ -153,8 +200,69 @@ function App() {
     
     // 播放提示音频
     if (config.audioPrompt) {
+      stopEnvironmentPromptAudio();
       const audio = new Audio(config.audioPrompt);
-      audio.play().catch(console.error);
+      environmentPromptAudioRef.current = audio;
+      audio.volume = 1;
+      let hasPromptStarted = false;
+
+      const updateEndsAt = (endsAt: number) => {
+        if (environmentIntroTokenRef.current !== nextToken) return;
+        setEnvironmentIntroEndsAt(endsAt);
+      };
+
+      audio.addEventListener('playing', () => {
+        hasPromptStarted = true;
+        updateEndsAt(Date.now() + PROMPT_POST_DELAY_MS);
+      });
+
+      audio.addEventListener('loadedmetadata', () => {
+        if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+        const totalMs = audio.duration * 1000;
+        const fadeStartDelay = Math.max(totalMs - PROMPT_CROSSFADE_MS, 0);
+        clearEnvironmentPromptFade();
+        environmentPromptFadeTimerRef.current = window.setTimeout(() => {
+          const fadeStart = performance.now();
+          const startVolume = audio.volume;
+          const step = (now: number) => {
+            const progress = Math.min((now - fadeStart) / PROMPT_CROSSFADE_MS, 1);
+            audio.volume = Math.max(0, startVolume * (1 - progress));
+            if (progress < 1) {
+              environmentPromptFadeRafRef.current = window.requestAnimationFrame(step);
+            } else {
+              environmentPromptFadeRafRef.current = null;
+            }
+          };
+          environmentPromptFadeRafRef.current = window.requestAnimationFrame(step);
+        }, fadeStartDelay);
+      });
+      audio.addEventListener('ended', () => {
+        clearEnvironmentPromptFade();
+        if (!hasPromptStarted) {
+          updateEndsAt(Date.now());
+        }
+      });
+      audio.addEventListener('error', () => {
+        clearEnvironmentPromptFade();
+        updateEndsAt(Date.now());
+      });
+
+      if (environmentIntroFallbackTimerRef.current) {
+        window.clearTimeout(environmentIntroFallbackTimerRef.current);
+      }
+      environmentIntroFallbackTimerRef.current = window.setTimeout(() => {
+        if (!hasPromptStarted) {
+          updateEndsAt(Date.now());
+        }
+        environmentIntroFallbackTimerRef.current = null;
+      }, PROMPT_FALLBACK_MS);
+
+      audio.play().catch((error) => {
+        updateEndsAt(Date.now());
+        console.error(error);
+      });
+    } else {
+      setEnvironmentIntroEndsAt(Date.now());
     }
     
     // 如果已经在 FlowList 模式，切换场景后会自动播放
@@ -222,6 +330,10 @@ function App() {
     setDemoPrintedContents([]);
     setDemoPrintIndex(0);
     setManualPrintedByItemId(new Map());
+    setEnvironmentCycleIndex(-1);
+    sceneBackground.deactivate();
+    setEnvironmentSwitchToken(Date.now());
+    stopEnvironmentPromptAudio();
   };
 
   const handleDetailViewExit = useCallback(() => {
@@ -618,6 +730,8 @@ function App() {
                       currentSceneTag={currentSceneTag}
                       onSceneChange={setCurrentSceneTag}
                       environmentSwitchToken={environmentSwitchToken}
+                      environmentIntroToken={environmentIntroToken}
+                      environmentIntroEndsAt={environmentIntroEndsAt}
                       environmentSlotId={activeEnvironmentSlotId}
                       onPlaybackStateChange={setPlaybackState}
                       onPrintTrigger={handlePrintTrigger}
