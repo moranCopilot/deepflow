@@ -27,7 +27,7 @@ export interface KnowledgeCard {
     timestamp: Date;
     triggerTime?: number; // 在逐字稿中的触发时间（秒）
     triggerSubtitleIndex?: number; // 关联的字幕索引
-    source?: 'generated' | 'ai_realtime'; // 来源标识
+    source?: 'generated' | 'ai_realtime' | 'ai_realtime_fallback'; // 来源标识
 }
 
 type ContentCategory = {
@@ -1308,25 +1308,20 @@ export function SupplyDepotApp({
   const [isLiveMode, setIsLiveMode] = useState(false);
   // Handle real-time knowledge cards from AI
   const handleRealtimeKnowledgeCard = (card: any) => {
-    console.log('[SupplyDepotApp] handleRealtimeKnowledgeCard called with:', card);
-    
     const knowledgeCard: KnowledgeCard = {
       id: Math.random().toString(36).slice(2, 11),
       title: card.title,
       content: card.content,
       tags: card.tags || [],
       timestamp: new Date(),
-      source: 'ai_realtime'
+      source: card.source || 'ai_realtime'
     };
-    
-    console.log('[SupplyDepotApp] Created knowledge card:', knowledgeCard);
     
     // Add to knowledge cards
     onUpdateKnowledgeCards(prev => [knowledgeCard, ...prev]);
     
     // Trigger print immediately for real-time cards
     if (onPrintTrigger) {
-      console.log('[SupplyDepotApp] Calling onPrintTrigger with card:', knowledgeCard);
       onPrintTrigger(knowledgeCard);
     } else {
       console.warn('[SupplyDepotApp] onPrintTrigger is not available!');
@@ -1337,7 +1332,6 @@ export function SupplyDepotApp({
       selectedItem?.script?.map(s => `${s.speaker}: ${s.text}`).join('\n') || '',
       selectedItem?.knowledgeCards || [],
       () => {
-          console.log("Live Connected");
           if (selectedItem) {
               setFlowItems(prev => prev.map(item => {
                   if (item.id === selectedItem.id) {
@@ -1356,7 +1350,6 @@ export function SupplyDepotApp({
           }
       },
       () => {
-          console.log("Live Disconnected");
           setIsLiveMode(false);
       },
       (error) => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { PhoneFrame } from './components/PhoneFrame';
 import { SupplyDepotApp, type KnowledgeCard, type FlowPlaybackState } from './components/SupplyDepotApp';
 import { HeadsetDevice } from './components/HeadsetDevice';
@@ -37,6 +37,9 @@ const CAPTURE_ASSETS = [
   '/assets/历史笔记-2.webp',
   '/assets/历史笔记-3.webp'
 ];
+
+const PRINT_KEYWORDS = ['已为你整理', '打印', '知识卡片', '知识小票', 'print job', 'printing', 'print'];
+const USE_SERVER_PRINT_FALLBACK = true;
 
 // Reusable Hardware Card Component for consistent layout
 const HardwareCard = ({ 
@@ -189,6 +192,13 @@ function App() {
   const [conversationHistory, setConversationHistory] = useState<Array<{ source: 'input' | 'output'; text: string; timestamp: number }>>([]);
   const [printedCardIds, setPrintedCardIds] = useState<Set<string>>(new Set());
   const conversationHistoryRef = useRef<Array<{ source: 'input' | 'output'; text: string; timestamp: number }>>([]);
+  const fallbackTimerRef = useRef<number | null>(null);
+  const fallbackPendingRef = useRef<{
+    baselineCount: number;
+    historySnapshot: Array<{ source: 'input' | 'output'; text: string; timestamp: number }>;
+    triggerText: string;
+    startedAt: number;
+  } | null>(null);
 
   const startFlow = () => {
     setIsFlowing(true);
@@ -242,6 +252,11 @@ function App() {
       conversationHistoryRef.current = [];
       setConversationHistory([]);
       prevTranscriptionRef.current = '';
+      if (fallbackTimerRef.current) {
+        window.clearTimeout(fallbackTimerRef.current);
+        fallbackTimerRef.current = null;
+      }
+      fallbackPendingRef.current = null;
     }
   }, [playbackState?.playbackMode]);
 
@@ -350,6 +365,100 @@ function App() {
     }
   };
 
+  const clearKnowledgeFallback = useCallback(() => {
+    if (fallbackTimerRef.current) {
+      window.clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+    fallbackPendingRef.current = null;
+  }, []);
+
+  const scheduleKnowledgeFallback = useCallback((triggerText: string) => {
+    if (USE_SERVER_PRINT_FALLBACK) {
+      return;
+    }
+    if (playbackState?.playbackMode !== 'live') {
+      return;
+    }
+
+    let historySnapshot = [...conversationHistoryRef.current];
+    if (historySnapshot.length === 0) {
+      const trimmedTrigger = triggerText.trim();
+      if (!trimmedTrigger) {
+        return;
+      }
+      historySnapshot = [{
+        source: 'output',
+        text: trimmedTrigger,
+        timestamp: Date.now()
+      }];
+    }
+
+    if (fallbackTimerRef.current) {
+      window.clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+
+    fallbackPendingRef.current = {
+      baselineCount: knowledgeCards.length,
+      historySnapshot,
+      triggerText,
+      startedAt: Date.now()
+    };
+
+    fallbackTimerRef.current = window.setTimeout(async () => {
+      const pending = fallbackPendingRef.current;
+      fallbackTimerRef.current = null;
+      fallbackPendingRef.current = null;
+
+      if (!pending) {
+        return;
+      }
+
+      if (playbackState?.playbackMode !== 'live') {
+        return;
+      }
+
+      if (knowledgeCards.length > pending.baselineCount) {
+        return;
+      }
+
+      try {
+        const summaryCard = await summarizeConversation(pending.historySnapshot);
+        setKnowledgeCards(prev => {
+          if (prev.some(card => card.id === summaryCard.id)) {
+            return prev;
+          }
+          return [summaryCard, ...prev];
+        });
+        handlePrintTrigger(summaryCard);
+      } catch (error) {
+        console.error('自动兜底知识小票生成失败:', error);
+      }
+    }, 4000);
+  }, [handlePrintTrigger, knowledgeCards.length, playbackState?.playbackMode, summarizeConversation]);
+
+  useEffect(() => {
+    if (playbackState?.playbackMode !== 'live' || !transcription) {
+      return;
+    }
+    const transcriptionText = transcription.text.toLowerCase();
+    if (!PRINT_KEYWORDS.some(keyword => transcriptionText.includes(keyword.toLowerCase()))) {
+      return;
+    }
+    scheduleKnowledgeFallback(transcription.text);
+  }, [playbackState?.playbackMode, transcription, scheduleKnowledgeFallback]);
+
+  useEffect(() => {
+    const pending = fallbackPendingRef.current;
+    if (!pending) {
+      return;
+    }
+    if (knowledgeCards.length > pending.baselineCount) {
+      clearKnowledgeFallback();
+    }
+  }, [knowledgeCards.length, clearKnowledgeFallback]);
+
   // 处理打印机按钮点击（三种模式）
   const handlePrintButtonClick = async () => {
     // 情况1：Demo模式 - 无音频播放
@@ -388,7 +497,6 @@ function App() {
     if (playbackState.playbackMode === 'live') {
       // 确保有对话历史
       if (conversationHistory.length === 0) {
-        console.log('暂无对话历史，无法总结');
         return;
       }
 
