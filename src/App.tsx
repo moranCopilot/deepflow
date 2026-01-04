@@ -695,7 +695,7 @@ function App() {
             </a>
             
             <a 
-              href="https://gamma.app/docs/DeepFlow-Station-2wwpdsu2agcl1km" 
+              href="/assets/deepflow_deck.pdf"
               target="_blank"
               rel="noopener noreferrer"
               onClick={handleGuideClick}
