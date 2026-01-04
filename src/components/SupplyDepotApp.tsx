@@ -71,6 +71,16 @@ export interface FlowItem {
     isGenerating?: boolean;
     generationProgress?: string;
     audioUrl?: string; // 直接音频文件路径（用于默认音频等预录制音频）
+    ttsTaskId?: string;
+    ttsStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+    ttsAudioUrl?: string;
+    ttsAudioUrls?: string[];
+    ttsError?: string;
+    ttsProgress?: {
+        stage: 'preparing' | 'calling-api' | 'processing' | 'generating' | 'completed' | 'failed';
+        message: string;
+        percentage?: number;
+    };
 }
 
 export interface FlowPlaybackState {
@@ -81,6 +91,8 @@ export interface FlowPlaybackState {
   duration?: number; // 音频总时长（秒）
   subtitleStartTime?: number; // 当前字幕的开始时间（秒）
   subtitleEndTime?: number; // 当前字幕的结束时间（秒）
+  currentItemId?: string; // 当前播放项 ID
+  currentItemKnowledgeCards?: KnowledgeCard[]; // 当前播放项的知识卡片
 }
 
 interface SupplyDepotAppProps {
@@ -100,6 +112,7 @@ interface SupplyDepotAppProps {
   onPlaybackStateChange?: (state: FlowPlaybackState) => void;
   onPrintTrigger?: (card: KnowledgeCard) => void;
   onTranscription?: (transcription: { source: 'input' | 'output'; text: string }) => void;
+  onDetailViewExit?: () => void;
   externalInputFile?: File | null;
   externalAudioFile?: File | null;
   onEnvironmentActivate?: (sceneTag: SceneTag) => void; // 环境激活回调，用于获取可播放项和播放方法
@@ -211,7 +224,74 @@ const normalizeMainCategory = (contentCategory?: ContentCategory | string): stri
   return contentCategory.main?.trim();
 };
 
-const sanitizeJsonString = (value: string): string => value.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+const sanitizeJsonString = (value: string): string => {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+
+    if (!inString) {
+      if (ch === '"') {
+        inString = true;
+      }
+      result += ch;
+      continue;
+    }
+
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      const next = value[i + 1];
+      if (next === undefined) {
+        result += '\\\\';
+        continue;
+      }
+
+      if (next === 'u') {
+        const hex = value.slice(i + 2, i + 6);
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+          result += '\\\\';
+          continue;
+        }
+      }
+
+      if (next === '"' || next === '\\' || next === '/' || next === 'b' || next === 'f' || next === 'n' || next === 'r' || next === 't' || next === 'u') {
+        result += ch;
+        escaped = true;
+        continue;
+      }
+
+      result += '\\\\';
+      continue;
+    }
+
+    if (ch === '\n') {
+      result += '\\n';
+      continue;
+    }
+
+    if (ch === '\r') {
+      result += '\\r';
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = false;
+      result += ch;
+      continue;
+    }
+
+    result += ch;
+  }
+
+  return result;
+};
 
 const normalizeCategoryValue = (value: string): string => value.toLowerCase().replace(CATEGORY_SEPARATOR_REGEX, '');
 
@@ -270,6 +350,7 @@ export function SupplyDepotApp({
   onPlaybackStateChange,
   onPrintTrigger,
   onTranscription,
+  onDetailViewExit,
   externalInputFile,
   externalAudioFile
 }: SupplyDepotAppProps) {
@@ -345,6 +426,14 @@ export function SupplyDepotApp({
   const rewardSystem = useRewardSystem();
   const { isSessionActive, sessionStartTime, distractionCount, startSession, endSession, checkDistraction, stats, totalHours, updateStats } = rewardSystem;
   const hlsRef = useRef<Hls | null>(null);
+  const prevSelectedItemRef = useRef<FlowItem | null>(null);
+
+  useEffect(() => {
+    if (prevSelectedItemRef.current && !selectedItem) {
+      onDetailViewExit?.();
+    }
+    prevSelectedItemRef.current = selectedItem;
+  }, [selectedItem, onDetailViewExit]);
 
   const handleImportFlowList = (list: SharedFlowList) => {
     if (!list.items || list.items.length === 0) return;
@@ -952,6 +1041,7 @@ export function SupplyDepotApp({
   const [copiedScript, setCopiedScript] = useState(false);
   const autoplayTimerRef = useRef<number | null>(null);
   const envAutoplayGateRef = useRef<{ introToken?: number; endsAt: number }>({ endsAt: 0 });
+  const fadeInTimerRef = useRef<number | null>(null);
   const lastHandledEnvSwitchTokenRef = useRef<number | undefined>(undefined);
 
   type MainPlaybackPhase = 'idle' | 'loading' | 'ready' | 'playing' | 'error';
@@ -1008,9 +1098,14 @@ export function SupplyDepotApp({
   type SavedMainAudioProgressStore = {
     version: 2;
     byKey: Record<string, SavedMainAudioProgress>;
+    byItemId?: Record<string, SavedMainAudioProgress>;
     recentKeys: string[];
+    recentItemIds?: string[];
     lastGlobalKey?: string;
     lastByScene: Partial<Record<SceneTag, string>>;
+    lastGlobalItemId?: string;
+    lastBySceneItemId?: Partial<Record<SceneTag, string>>;
+    lastBySlotId?: Partial<Record<SlotId, string>>;
     updatedAt: number;
   };
 
@@ -1070,7 +1165,9 @@ export function SupplyDepotApp({
   const defaultProgressStore = (): SavedMainAudioProgressStore => ({
     version: 2,
     byKey: {},
+    byItemId: {},
     recentKeys: [],
+    recentItemIds: [],
     lastByScene: {},
     updatedAt: Date.now()
   });
@@ -1084,16 +1181,34 @@ export function SupplyDepotApp({
       if (parsed.version !== 2) return defaultProgressStore();
       const byKey = parsed.byKey && typeof parsed.byKey === 'object' ? (parsed.byKey as Record<string, SavedMainAudioProgress>) : {};
       const recentKeys = Array.isArray(parsed.recentKeys) ? parsed.recentKeys.filter((k) => typeof k === 'string') : [];
+      const byItemId =
+        parsed.byItemId && typeof parsed.byItemId === 'object' ? (parsed.byItemId as Record<string, SavedMainAudioProgress>) : {};
+      const recentItemIds = Array.isArray(parsed.recentItemIds)
+        ? parsed.recentItemIds.filter((id) => typeof id === 'string')
+        : [];
       const lastByScene =
         parsed.lastByScene && typeof parsed.lastByScene === 'object'
           ? (parsed.lastByScene as Partial<Record<SceneTag, string>>)
           : {};
+      const lastBySceneItemId =
+        parsed.lastBySceneItemId && typeof parsed.lastBySceneItemId === 'object'
+          ? (parsed.lastBySceneItemId as Partial<Record<SceneTag, string>>)
+          : {};
+      const lastBySlotId =
+        parsed.lastBySlotId && typeof parsed.lastBySlotId === 'object'
+          ? (parsed.lastBySlotId as Partial<Record<SlotId, string>>)
+          : {};
       return {
         version: 2,
         byKey,
+        byItemId,
         recentKeys,
+        recentItemIds,
         lastGlobalKey: typeof parsed.lastGlobalKey === 'string' ? parsed.lastGlobalKey : undefined,
         lastByScene,
+        lastGlobalItemId: typeof parsed.lastGlobalItemId === 'string' ? parsed.lastGlobalItemId : undefined,
+        lastBySceneItemId,
+        lastBySlotId,
         updatedAt: typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt) ? parsed.updatedAt : Date.now()
       };
     } catch {
@@ -1114,6 +1229,23 @@ export function SupplyDepotApp({
     const store = readProgressStore();
     const existing = store.byKey[contentKey];
     if (existing && existing.contentKey === contentKey) return existing;
+
+    const byItem = store.byItemId?.[item.id];
+    if (byItem) {
+      const adjusted: SavedMainAudioProgress = {
+        ...byItem,
+        contentKey,
+        itemId: item.id
+      };
+      if (byItem.contentKey !== contentKey) {
+        store.byKey[contentKey] = adjusted;
+        store.lastGlobalKey = contentKey;
+        store.lastByScene[adjusted.sceneTag] = contentKey;
+        store.recentKeys = [contentKey, ...store.recentKeys.filter((k) => k !== contentKey)].slice(0, 20);
+        writeProgressStore(store);
+      }
+      return adjusted;
+    }
 
     // One-time migration path from v1 (itemId-based) when possible.
     const legacy = readSavedMainAudioProgressV1();
@@ -1146,12 +1278,70 @@ export function SupplyDepotApp({
     return null;
   };
 
+  const findItemById = (itemId: string): FlowItem | null => {
+    return flowItems.find((item) => item.id === itemId) || null;
+  };
+
   const shouldResumeFromProgress = (progress: { time: number; duration?: number }) => {
     const minResumeSeconds = 5;
     const tailGuardSeconds = 10;
     if (progress.time < minResumeSeconds) return false;
     if (progress.duration && progress.duration - progress.time < tailGuardSeconds) return false;
     return true;
+  };
+
+  const isPlayableItem = (item: FlowItem) => {
+    return (item.script && item.script.length > 0 || item.audioUrl) && item.contentType !== 'interactive';
+  };
+
+  const pickResumeItem = (options: { slotId?: SlotId | null; sceneTag?: SceneTag }) => {
+    const store = readProgressStore();
+    const seen = new Set<string>();
+    const candidateIds: string[] = [];
+    const pushId = (itemId?: string) => {
+      if (!itemId || seen.has(itemId)) return;
+      seen.add(itemId);
+      candidateIds.push(itemId);
+    };
+
+    if (options.slotId && store.lastBySlotId?.[options.slotId]) {
+      pushId(store.lastBySlotId[options.slotId]);
+    }
+    if (options.sceneTag && store.lastBySceneItemId?.[options.sceneTag]) {
+      pushId(store.lastBySceneItemId[options.sceneTag]);
+    }
+    pushId(store.lastGlobalItemId);
+    (store.recentItemIds || []).forEach(pushId);
+
+    for (const itemId of candidateIds) {
+      const item = findItemById(itemId);
+      if (!item) continue;
+      if (options.slotId && item.slotId !== options.slotId) continue;
+      if (!isPlayableItem(item)) continue;
+      const savedProgress = getSavedProgressForItem(item);
+      if (savedProgress && shouldResumeFromProgress(savedProgress)) {
+        return item;
+      }
+    }
+
+    const candidateKeys = [
+      store.lastGlobalKey,
+      options.sceneTag ? store.lastByScene[options.sceneTag] : undefined,
+      ...(store.recentKeys || [])
+    ].filter((k): k is string => typeof k === 'string' && k.length > 0);
+
+    for (const key of candidateKeys) {
+      const item = findItemByContentKey(key);
+      if (!item) continue;
+      if (options.slotId && item.slotId !== options.slotId) continue;
+      if (!isPlayableItem(item)) continue;
+      const savedProgress = getSavedProgressForItem(item);
+      if (savedProgress && shouldResumeFromProgress(savedProgress)) {
+        return item;
+      }
+    }
+
+    return null;
   };
 
   const persistMainAudioProgress = (mode: 'throttled' | 'force') => {
@@ -1170,7 +1360,7 @@ export function SupplyDepotApp({
     const partsHash = audioParts.length > 1 ? stableHash32(audioParts.join('|')) : undefined;
 
     const store = readProgressStore();
-    store.byKey[contentKey] = {
+    const progressRecord: SavedMainAudioProgress = {
       contentKey,
       itemId: activeItem.id,
       sceneTag,
@@ -1181,11 +1371,31 @@ export function SupplyDepotApp({
       partsCount,
       partsHash
     };
+    store.byKey[contentKey] = progressRecord;
+    if (!store.byItemId) {
+      store.byItemId = {};
+    }
+    store.byItemId[activeItem.id] = progressRecord;
     store.lastGlobalKey = contentKey;
     store.lastByScene[sceneTag] = contentKey;
+    store.lastGlobalItemId = activeItem.id;
+    if (!store.lastBySceneItemId) {
+      store.lastBySceneItemId = {};
+    }
+    store.lastBySceneItemId[sceneTag] = activeItem.id;
+    if (activeItem.slotId) {
+      if (!store.lastBySlotId) {
+        store.lastBySlotId = {};
+      }
+      store.lastBySlotId[activeItem.slotId] = activeItem.id;
+    }
     store.updatedAt = now;
 
     store.recentKeys = [contentKey, ...store.recentKeys.filter((k) => k !== contentKey)].slice(0, 20);
+    store.recentItemIds = [
+      activeItem.id,
+      ...(store.recentItemIds || []).filter((id) => id !== activeItem.id)
+    ].slice(0, 20);
     writeProgressStore(store);
   };
 
@@ -1280,8 +1490,12 @@ export function SupplyDepotApp({
       autoplayTimerRef.current = null;
     }
     envAutoplayGateRef.current = { endsAt: 0 };
+    clearFadeIn();
 
     stopMainAudioPlayback(mode);
+    if (audioRef.current) {
+      audioRef.current.volume = 1;
+    }
     setAudioError(null);
     setTTSProgress(null);
     setAudioUrl(null);
@@ -1292,11 +1506,9 @@ export function SupplyDepotApp({
   };
   
   // TTS 生成进度状态
-  const [ttsProgress, setTTSProgress] = useState<{
-    stage: string;
-    message: string;
-    percentage?: number;
-  } | null>(null);
+  const [ttsProgress, setTTSProgress] = useState<FlowItem['ttsProgress'] | null>(null);
+  const ttsPollersRef = useRef<Map<string, AbortController>>(new Map());
+  const detailAutoPlayRef = useRef<Set<string>>(new Set());
 
   // Fullscreen Flow Mode State
 
@@ -1416,6 +1628,34 @@ export function SupplyDepotApp({
     }
   }, [playbackRate]);
 
+  const clearFadeIn = () => {
+    if (fadeInTimerRef.current !== null) {
+      window.cancelAnimationFrame(fadeInTimerRef.current);
+      fadeInTimerRef.current = null;
+    }
+  };
+
+  const fadeInAudio = (durationMs: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    clearFadeIn();
+    const startTime = performance.now();
+    const startVolume = audio.volume;
+    const targetVolume = 1;
+
+    const step = (now: number) => {
+      const progress = Math.min((now - startTime) / durationMs, 1);
+      audio.volume = startVolume + (targetVolume - startVolume) * progress;
+      if (progress < 1) {
+        fadeInTimerRef.current = window.requestAnimationFrame(step);
+      } else {
+        fadeInTimerRef.current = null;
+      }
+    };
+
+    fadeInTimerRef.current = window.requestAnimationFrame(step);
+  };
+
   // Keep env autoplay gate in sync with the latest intro timing updates from parent.
   useEffect(() => {
     if (environmentIntroToken === undefined) return;
@@ -1436,6 +1676,7 @@ export function SupplyDepotApp({
       autoplayTimerRef.current = null;
     }
 
+    clearFadeIn();
     if (audioUrl && audioRef.current) {
       const canAutoplayNow = () => {
         const gateEndsAt = envAutoplayGateRef.current.endsAt;
@@ -1452,18 +1693,34 @@ export function SupplyDepotApp({
         }, delay);
       };
 
-      const tryPlay = () => {
+      const tryPlay = (withFadeIn: boolean) => {
         if (!audioRef.current) return;
+        if (withFadeIn) {
+          audioRef.current.volume = 0;
+        } else {
+          audioRef.current.volume = 1;
+        }
         const playPromise = audioRef.current.play();
         if (playPromise !== undefined) {
-          playPromise.catch((err) => {
+          playPromise
+            .then(() => {
+              if (withFadeIn) {
+                fadeInAudio(300);
+              }
+            })
+            .catch((err) => {
             if (err?.name === 'AbortError') {
               console.log('Play interrupted by new request');
               return;
             }
+            if (withFadeIn && audioRef.current) {
+              audioRef.current.volume = 1;
+            }
             console.error('Play failed:', err);
             setAudioError('播放失败，请重试');
           });
+        } else if (withFadeIn) {
+          fadeInAudio(300);
         }
       };
 
@@ -1471,7 +1728,7 @@ export function SupplyDepotApp({
         const expectedSessionId = mainPlaybackRef.current.sessionId;
         const expectedAudioUrl = audioUrl;
         if (canAutoplayNow()) {
-          tryPlay();
+          tryPlay(false);
         } else {
           scheduleAutoplay(() => {
             // Only autoplay if we are still on the same audioUrl / session.
@@ -1482,7 +1739,7 @@ export function SupplyDepotApp({
               requestAutoplay();
               return;
             }
-            tryPlay();
+            tryPlay(true);
           });
         }
       };
@@ -1533,6 +1790,7 @@ export function SupplyDepotApp({
     }
     
     return () => {
+        clearFadeIn();
         if (hlsRef.current) {
             hlsRef.current.destroy();
             hlsRef.current = null;
@@ -1780,8 +2038,9 @@ export function SupplyDepotApp({
     };
   }, [currentPlayingItem, currentTime, duration]);
 
-  // Track printed cards to avoid duplicate printing
-  const printedCardsRef = useRef<Set<string>>(new Set());
+  // 自动打印：按播放项去重 + 记录上一次触发时间
+  const autoPrintedByItemRef = useRef<Map<string, Set<string>>>(new Map());
+  const prevAutoPrintTimeByItemRef = useRef<Map<string, number>>(new Map());
 
   // Sync playback state - 支持详情页播放和 go flow 模式
   const prevPlaybackStateRef = useRef<string>('');
@@ -1789,6 +2048,7 @@ export function SupplyDepotApp({
     if (onPlaybackStateChange) {
          // 优先使用 currentPlayingItem，如果没有则使用 selectedItem（详情页播放）
          const activeItem = currentPlayingItem || selectedItem;
+         const currentItem = currentPlayingItem;
          
          // 如果 activeItem 有字幕，使用它的字幕信息
          let subtitleText = '';
@@ -1833,25 +2093,50 @@ export function SupplyDepotApp({
              currentTime: currentTime,
              duration: duration,
              subtitleStartTime: finalStartTime,
-             subtitleEndTime: finalEndTime
+             subtitleEndTime: finalEndTime,
+             currentItemId: currentItem?.id,
+             currentItemKnowledgeCards: currentItem?.knowledgeCards
          };
 
-         const newStateStr = JSON.stringify(newPlaybackState);
+         const knowledgeCardSignature = currentItem?.knowledgeCards
+           ? currentItem.knowledgeCards
+               .map(card => `${card.id}:${card.triggerTime ?? 'na'}`)
+               .join('|')
+           : '';
+         const newStateStr = JSON.stringify({
+           ...newPlaybackState,
+           currentItemKnowledgeCards: knowledgeCardSignature
+         });
          if (prevPlaybackStateRef.current !== newStateStr) {
              onPlaybackStateChange(newPlaybackState);
              prevPlaybackStateRef.current = newStateStr;
          }
 
          // Check for knowledge cards that should trigger printing
-         if (activeItem?.knowledgeCards && currentTime !== undefined && onPrintTrigger) {
-           activeItem.knowledgeCards.forEach(card => {
-             if (card.triggerTime !== undefined && 
-                 !printedCardsRef.current.has(card.id) &&
-                 Math.abs(currentTime - card.triggerTime) < 0.5) { // 0.5秒容差
+         if (currentItem?.knowledgeCards && currentTime !== undefined && onPrintTrigger) {
+           const itemId = currentItem.id;
+           const prevTime = prevAutoPrintTimeByItemRef.current.get(itemId);
+           if (prevTime === undefined || currentTime < prevTime) {
+             prevAutoPrintTimeByItemRef.current.set(itemId, currentTime);
+             return;
+           }
+
+           let printedSet = autoPrintedByItemRef.current.get(itemId);
+           if (!printedSet) {
+             printedSet = new Set();
+             autoPrintedByItemRef.current.set(itemId, printedSet);
+           }
+
+           const toleranceSeconds = 0.5;
+           currentItem.knowledgeCards.forEach(card => {
+             if (card.triggerTime === undefined) return;
+             if (printedSet!.has(card.id)) return;
+             if (card.triggerTime >= prevTime - toleranceSeconds && card.triggerTime <= currentTime + toleranceSeconds) {
                onPrintTrigger(card);
-               printedCardsRef.current.add(card.id);
+               printedSet!.add(card.id);
              }
            });
+           prevAutoPrintTimeByItemRef.current.set(itemId, currentTime);
          }
      }
   }, [isMainAudioPlaying, currentSubtitle, currentSubtitleInfo, currentPlayingItem, selectedItem, isLiveMode, currentTime, duration, onPlaybackStateChange, onPrintTrigger]);
@@ -1874,29 +2159,24 @@ export function SupplyDepotApp({
           introToken: environmentIntroToken,
           endsAt: typeof environmentIntroEndsAt === 'number' && Number.isFinite(environmentIntroEndsAt) ? environmentIntroEndsAt : 0
         };
-      } else {
-        const store = readProgressStore();
-        const candidateKeys = [
-          store.lastGlobalKey,
-          store.lastByScene[currentSceneTag],
-          ...(store.recentKeys || [])
-        ].filter((k): k is string => typeof k === 'string' && k.length > 0);
+      }
 
-        for (const key of candidateKeys) {
-          const savedItem = findItemByContentKey(key);
-          const savedProgress = savedItem ? getSavedProgressForItem(savedItem) : null;
-          if (savedItem && savedProgress && shouldResumeFromProgress(savedProgress) && getPlayableItems([savedItem]).length > 0) {
-            if (savedItem.sceneTag && savedItem.sceneTag !== currentSceneTag) {
-              onSceneChange(savedItem.sceneTag);
-            }
-            setCurrentPlayingItem(savedItem);
-            setSelectedItem(savedItem);
-            handlePlayAudio(savedItem, false);
-            setHasAutoPlayed(true);
-            return;
-          }
+      const resumeItem = pickResumeItem({
+        slotId: envForced ? environmentSlotId : undefined,
+        sceneTag: currentSceneTag
+      });
+      if (resumeItem) {
+        if (resumeItem.sceneTag && resumeItem.sceneTag !== currentSceneTag) {
+          onSceneChange(resumeItem.sceneTag);
         }
+        setCurrentPlayingItem(resumeItem);
+        setSelectedItem(resumeItem);
+        handlePlayAudio(resumeItem, false);
+        setHasAutoPlayed(true);
+        return;
+      }
 
+      if (!envForced) {
         const legacy = readSavedMainAudioProgressV1();
         if (legacy && shouldResumeFromProgress(legacy)) {
           const legacyItem = flowItems.find((it) => it.id === legacy.itemId);
@@ -1955,13 +2235,23 @@ export function SupplyDepotApp({
       environmentSwitchToken !== undefined &&
       environmentSwitchToken !== lastHandledEnvSwitchTokenRef.current;
 
-    // Forced environment scene switch (restart immediately from beginning)
+    // Forced environment scene switch (respect resume when available)
     if (envForced) {
       lastHandledEnvSwitchTokenRef.current = environmentSwitchToken;
       envAutoplayGateRef.current = {
         introToken: environmentIntroToken,
         endsAt: typeof environmentIntroEndsAt === 'number' && Number.isFinite(environmentIntroEndsAt) ? environmentIntroEndsAt : 0
       };
+      const resumeItem = pickResumeItem({
+        slotId: environmentSlotId,
+        sceneTag: currentSceneTag
+      });
+      if (resumeItem) {
+        setCurrentPlayingItem(resumeItem);
+        setSelectedItem(resumeItem);
+        handlePlayAudio(resumeItem, false);
+        return;
+      }
       const playableItems = environmentSlotId
         ? getPlayableItemsBySlot(flowItems, environmentSlotId)
         : getPlayableItems(flowItems, currentSceneTag);
@@ -1969,7 +2259,7 @@ export function SupplyDepotApp({
         const firstItem = playableItems[0];
         setCurrentPlayingItem(firstItem);
         setSelectedItem(firstItem);
-        handlePlayAudio(firstItem, false, { skipResume: true });
+        handlePlayAudio(firstItem, false);
       }
       return;
     }
@@ -2059,10 +2349,385 @@ export function SupplyDepotApp({
     }
   }, [selectedItem]);
 
+  useEffect(() => {
+    return () => {
+      for (const controller of ttsPollersRef.current.values()) {
+        controller.abort();
+      }
+      ttsPollersRef.current.clear();
+    };
+  }, []);
+
+  const abortTTSPoller = (itemId: string) => {
+    const controller = ttsPollersRef.current.get(itemId);
+    if (controller) {
+      controller.abort();
+      ttsPollersRef.current.delete(itemId);
+    }
+  };
+
+  const updateFlowItemTTSTask = (itemId: string, updates: Partial<FlowItem>) => {
+    setFlowItems(prev =>
+      prev.map(item => (item.id === itemId ? { ...item, ...updates } : item))
+    );
+    setSelectedItem(prev => (prev?.id === itemId ? { ...prev, ...updates } : prev));
+    setCurrentPlayingItem(prev => (prev?.id === itemId ? { ...prev, ...updates } : prev));
+  };
+
+  const buildTTSPayload = (item: FlowItem) => {
+    if (!item.script || item.script.length === 0) return null;
+    const sanitizedScript = item.script
+      .map((line) => ({
+        speaker: typeof line?.speaker === 'string' ? line.speaker : '',
+        text: typeof line?.text === 'string' ? line.text : ''
+      }))
+      .filter((line) => line.text.trim().length > 0);
+
+    if (sanitizedScript.length === 0) return null;
+
+    const isQuickSummary = item.contentType === 'output';
+    const isDeepAnalysis = item.contentType === 'discussion';
+    const preset = isQuickSummary ? 'quick_summary' : isDeepAnalysis ? 'deep_analysis' : undefined;
+    const text = sanitizedScript
+      .map((line) => {
+        const speaker = line.speaker.trim();
+        const content = line.text.trim();
+        if (!speaker) return content;
+        return isDeepAnalysis ? `${speaker}: ${content}` : content;
+      })
+      .join('\n');
+
+    return {
+      script: sanitizedScript,
+      text,
+      preset,
+      isQuickSummary,
+      isDeepAnalysis
+    };
+  };
+
+  const normalizeTTSProgress = (progress: any): FlowItem['ttsProgress'] => ({
+    stage: progress?.stage || 'processing',
+    message: progress?.message || '处理中...',
+    percentage: progress?.percentage
+  });
+
+  const sleepWithAbort = (ms: number, signal?: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        if (signal) {
+          signal.removeEventListener('abort', onAbort);
+        }
+        resolve();
+      }, ms);
+
+      const onAbort = () => {
+        window.clearTimeout(timeoutId);
+        reject(new Error('CANCELLED'));
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
+
+  const pollTTSTaskStatus = async (
+    taskId: string,
+    itemId: string,
+    options: {
+      signal?: AbortSignal;
+      isActive?: () => boolean;
+      onProgress?: (progress: FlowItem['ttsProgress']) => void;
+      updateItem?: boolean;
+    } = {}
+  ): Promise<{ url?: string; urls?: string[]; duration?: number }> => {
+    const startAt = Date.now();
+    const maxDurationMs = 5 * 60 * 1000;
+    let attempts = 0;
+    const shouldUpdateItem = options.updateItem !== false;
+
+    while (true) {
+      if (options.signal?.aborted) {
+        throw new Error('CANCELLED');
+      }
+      if (options.isActive && !options.isActive()) {
+        throw new Error('CANCELLED');
+      }
+      if (Date.now() - startAt > maxDurationMs) {
+        if (shouldUpdateItem) {
+          updateFlowItemTTSTask(itemId, {
+            ttsStatus: 'failed',
+            ttsError: 'TTS 生成超时',
+            ttsProgress: {
+              stage: 'failed',
+              message: '生成超时',
+              percentage: 0
+            }
+          });
+        }
+        throw new Error('TTS 生成超时，请稍后重试');
+      }
+
+      try {
+        const statusResponse = await fetch(`${getApiUrl('/api/tts')}?taskId=${taskId}`, {
+          signal: options.signal
+        });
+        const status = await statusResponse.json();
+
+        if (!statusResponse.ok) {
+          const errorMessage =
+            status?.error || (statusResponse.status === 404 ? 'TTS 任务不存在或已过期' : 'TTS 任务查询失败');
+          if (shouldUpdateItem) {
+            updateFlowItemTTSTask(itemId, {
+              ttsStatus: 'failed',
+              ttsError: errorMessage,
+              ttsProgress: {
+                stage: 'failed',
+                message: errorMessage,
+                percentage: 0
+              }
+            });
+          }
+          throw new Error(errorMessage);
+        }
+
+        if (status.progress) {
+          const progress = normalizeTTSProgress(status.progress);
+          if (shouldUpdateItem) {
+            const updates: Partial<FlowItem> = { ttsProgress: progress };
+            if (status.status === 'pending' || status.status === 'processing') {
+              updates.ttsStatus = status.status;
+            }
+            updateFlowItemTTSTask(itemId, updates);
+          }
+          if (options.onProgress) {
+            options.onProgress(progress);
+          }
+        } else if (shouldUpdateItem && (status.status === 'pending' || status.status === 'processing')) {
+          updateFlowItemTTSTask(itemId, {
+            ttsStatus: status.status
+          });
+        }
+
+        if (status.status === 'completed') {
+          const result = status.result || {};
+          if (shouldUpdateItem) {
+            updateFlowItemTTSTask(itemId, {
+              ttsStatus: 'completed',
+              ttsTaskId: taskId,
+              ttsAudioUrl: result.url,
+              ttsAudioUrls: result.urls,
+              ttsError: undefined,
+              ttsProgress: {
+                stage: 'completed',
+                message: '完成',
+                percentage: 100
+              }
+            });
+          }
+          return result;
+        }
+
+        if (status.status === 'failed') {
+          const errorMessage = status.error || 'TTS 生成失败';
+          if (shouldUpdateItem) {
+            updateFlowItemTTSTask(itemId, {
+              ttsStatus: 'failed',
+              ttsTaskId: taskId,
+              ttsError: errorMessage,
+              ttsProgress: {
+                stage: 'failed',
+                message: errorMessage,
+                percentage: 0
+              }
+            });
+          }
+          throw new Error(errorMessage);
+        }
+      } catch (error: any) {
+        if (error?.name === 'AbortError' || error?.message === 'CANCELLED') {
+          throw new Error('CANCELLED');
+        }
+        if (shouldUpdateItem) {
+          updateFlowItemTTSTask(itemId, {
+            ttsStatus: 'failed',
+            ttsError: error?.message || 'TTS 生成失败',
+            ttsProgress: {
+              stage: 'failed',
+              message: error?.message || 'TTS 生成失败',
+              percentage: 0
+            }
+          });
+        }
+        throw error;
+      }
+
+      attempts += 1;
+      const nextDelay = attempts < 3 ? 2000 : attempts < 6 ? 5000 : 10000;
+      await sleepWithAbort(nextDelay, options.signal);
+    }
+  };
+
+  const cachePreGeneratedAudio = async (
+    item: FlowItem,
+    preset: string | undefined,
+    result: { url?: string; duration?: number }
+  ) => {
+    if (!preset || !result.url || !item.script) return;
+
+    try {
+      const scriptHash = await generateScriptHash(item.script);
+      const isLocalUrl = result.url.startsWith('data:') || result.url.startsWith('blob:');
+      const targetUrl = isLocalUrl
+        ? result.url
+        : `${getApiUrl('/api/proxy-audio')}?url=${encodeURIComponent(result.url)}`;
+      const audioResponse = await fetch(targetUrl);
+      const audioBlob = await audioResponse.blob();
+      await cacheManager.cacheAudio(scriptHash, preset, audioBlob, {
+        duration: result.duration,
+        contentType: audioBlob.type || 'audio/mpeg'
+      });
+    } catch (error) {
+      console.error('[Cache] 预生成音频缓存失败:', error);
+    }
+  };
+
+  const preGenerateTTS = async (item: FlowItem) => {
+    if (!item || item.contentType === 'interactive' || item.audioUrl) return;
+    if (item.ttsStatus === 'pending' || item.ttsStatus === 'processing' || item.ttsStatus === 'completed') {
+      return;
+    }
+
+    const payload = buildTTSPayload(item);
+    if (!payload) return;
+
+    try {
+      if (payload.preset && item.script) {
+        const scriptHash = await generateScriptHash(item.script);
+        const cachedAudioUrl = await cacheManager.getCachedAudioUrl(scriptHash, payload.preset);
+        if (cachedAudioUrl) {
+          updateFlowItemTTSTask(item.id, {
+            ttsStatus: 'completed',
+            ttsAudioUrl: cachedAudioUrl,
+            ttsProgress: {
+              stage: 'completed',
+              message: '完成',
+              percentage: 100
+            }
+          });
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('[Cache] 检查预生成音频缓存失败:', error);
+    }
+
+    updateFlowItemTTSTask(item.id, {
+      ttsStatus: 'pending',
+      ttsProgress: {
+        stage: 'preparing',
+        message: '准备生成音频...',
+        percentage: 0
+      },
+      ttsError: undefined
+    });
+
+    try {
+      const createResponse = await fetch(getApiUrl('/api/tts'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script: payload.script,
+          text: payload.text,
+          preset: payload.preset,
+          contentType: item.contentType
+        })
+      });
+
+      const createData = await createResponse.json();
+      if (!createResponse.ok) {
+        throw new Error(createData.error || 'TTS 任务创建失败');
+      }
+
+      if (createData.status === 'completed' && createData.result) {
+        updateFlowItemTTSTask(item.id, {
+          ttsStatus: 'completed',
+          ttsAudioUrl: createData.result.url,
+          ttsAudioUrls: createData.result.urls,
+          ttsProgress: {
+            stage: 'completed',
+            message: '完成',
+            percentage: 100
+          }
+        });
+        await cachePreGeneratedAudio(item, payload.preset, createData.result);
+        return;
+      }
+
+      const taskId = createData.taskId;
+      if (!taskId) {
+        throw new Error('未收到任务 ID');
+      }
+
+      updateFlowItemTTSTask(item.id, {
+        ttsTaskId: taskId,
+        ttsStatus: 'pending'
+      });
+
+      abortTTSPoller(item.id);
+      const controller = new AbortController();
+      ttsPollersRef.current.set(item.id, controller);
+
+      try {
+        const result = await pollTTSTaskStatus(taskId, item.id, { signal: controller.signal });
+        await cachePreGeneratedAudio(item, payload.preset, result);
+      } finally {
+        ttsPollersRef.current.delete(item.id);
+      }
+    } catch (error: any) {
+      if (error?.name === 'AbortError' || error?.message === 'CANCELLED') {
+        return;
+      }
+      updateFlowItemTTSTask(item.id, {
+        ttsStatus: 'failed',
+        ttsError: error?.message || 'TTS 任务创建失败',
+        ttsProgress: {
+          stage: 'failed',
+          message: error?.message || 'TTS 任务创建失败',
+          percentage: 0
+        }
+      });
+    }
+  };
+
+  const schedulePreGenerateTTS = (item: FlowItem) => {
+    const run = () => {
+      preGenerateTTS(item).catch((error) => {
+        console.error('[TTS] 预生成失败:', error);
+      });
+    };
+
+    const idleCallback = (globalThis as any).requestIdleCallback as
+      | ((cb: () => void, opts?: { timeout: number }) => number)
+      | undefined;
+    if (typeof idleCallback === 'function') {
+      idleCallback(run, { timeout: 2000 });
+      return;
+    }
+
+    setTimeout(run, 0);
+  };
+
   const handlePlayAudio = async (item: FlowItem, userInitiated: boolean = false, options: { skipResume?: boolean } = {}) => {
     const requestId = ++playRequestIdRef.current;
     const isActiveRequest = () => playRequestIdRef.current === requestId;
     console.log('[PlayAudio] Starting for item:', item.id, item.contentType, 'userInitiated:', userInitiated);
+
+    setCurrentPlayingItem(item);
 
     const skipResume = options.skipResume === true;
     const savedProgress = !skipResume ? getSavedProgressForItem(item) : null;
@@ -2070,7 +2735,7 @@ export function SupplyDepotApp({
     const contentKey = computeContentKey(item);
     setMainPlaybackState({
       sessionId: requestId,
-      phase: 'loading',
+      phase: 'idle',
       contentKey,
       itemId: item.id,
       sceneTag: (item.sceneTag || currentSceneTag) as SceneTag,
@@ -2193,36 +2858,6 @@ export function SupplyDepotApp({
         if (cachedAudioUrl) {
           console.log('[Cache] 使用缓存的音频');
           
-          // 只在初始生成时（首次播放）才模拟假 loading
-          // 如果已经播放过（hasStarted 为 true），直接使用缓存，不显示 loading
-          const isInitialGeneration = !item.playbackProgress?.hasStarted;
-          
-          if (isInitialGeneration) {
-            // 模拟 TTS 生成流程的 loading（3-5 秒）
-            setTTSProgress({ stage: 'preparing', message: '准备生成音频...', percentage: 10 });
-            
-            await new Promise(resolve => setTimeout(resolve, 800));
-            if (!isActiveRequest()) return;
-            setTTSProgress({ stage: 'calling-api', message: '调用 TTS API...', percentage: 30 });
-            
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            if (!isActiveRequest()) return;
-            setTTSProgress({ stage: 'processing', message: '处理音频数据...', percentage: 60 });
-            
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            if (!isActiveRequest()) return;
-            setTTSProgress({ stage: 'generating', message: '生成音频中...', percentage: 80 });
-            
-            await new Promise(resolve => setTimeout(resolve, 800));
-            if (!isActiveRequest()) return;
-            setTTSProgress({ stage: 'completed', message: '完成', percentage: 100 });
-            
-            await new Promise(resolve => setTimeout(resolve, 400));
-            if (!isActiveRequest()) return;
-            
-            setTTSProgress(null);
-          }
-          
           // 设置音频（无论是否显示 loading）
           if (!isActiveRequest()) return;
           if (pendingSeekRef.current && pendingSeekRef.current.contentKey === computeContentKey(item)) {
@@ -2272,7 +2907,6 @@ export function SupplyDepotApp({
     }
     
     if (!isActiveRequest()) return;
-    setTTSProgress({ stage: 'preparing', message: '准备生成音频...', percentage: 0 });
     
     // 标记 item 为已开始播放
     setFlowItems(prev => prev.map(flowItem => {
@@ -2291,157 +2925,160 @@ export function SupplyDepotApp({
       return flowItem;
     }));
 
-    // 检查脚本是否为空
-	    if (!item.script || item.script.length === 0) {
-	        console.warn('[SupplyDepot] Script is empty, skipping TTS generation');
-	        setAudioError('无法生成音频：脚本内容为空');
-	        setMainPlaybackState({ phase: 'error', error: '无法生成音频：脚本内容为空' });
-	        setTTSProgress(null);
-	        return;
-	    }
+    const payload = buildTTSPayload(item);
+    if (!payload) {
+      console.warn('[SupplyDepot] Script is empty, skipping TTS generation');
+      setAudioError('无法生成音频：脚本内容为空');
+      setMainPlaybackState({ phase: 'error', error: '无法生成音频：脚本内容为空' });
+      setTTSProgress(null);
+      return;
+    }
 
     try {
-      const sanitizedScript = item.script
-        .map((line) => ({
-          speaker: typeof line?.speaker === 'string' ? line.speaker : '',
-          text: typeof line?.text === 'string' ? line.text : ''
-        }))
-        .filter((line) => line.text.trim().length > 0);
+      const isQuickSummary = payload.isQuickSummary;
+      const isDeepAnalysis = payload.isDeepAnalysis;
+      let result: { url?: string; urls?: string[]; duration?: number } | undefined;
 
-	      if (sanitizedScript.length === 0) {
-	        console.warn('[SupplyDepot] Script has no valid text lines, skipping TTS generation');
-	        setAudioError('无法生成音频：脚本内容为空');
-	        setMainPlaybackState({ phase: 'error', error: '无法生成音频：脚本内容为空' });
-	        setTTSProgress(null);
-	        return;
-	      }
+      const hasPreGeneratedAudio =
+        item.ttsStatus === 'completed' &&
+        ((item.ttsAudioUrl && item.ttsAudioUrl.length > 0) ||
+          (item.ttsAudioUrls && item.ttsAudioUrls.length > 0));
 
-      // 判断使用哪种模式
-      const isQuickSummary = item.contentType === 'output';
-      const isDeepAnalysis = item.contentType === 'discussion';
-      
-      // 1. 创建任务
-      const text = sanitizedScript
-        .map((line) => {
-          const speaker = line.speaker.trim();
-          const content = line.text.trim();
-          if (!speaker) return content;
-          return isDeepAnalysis ? `${speaker}: ${content}` : content;
-        })
-        .join('\n');
+      if (hasPreGeneratedAudio) {
+        result = {
+          url: item.ttsAudioUrl,
+          urls: item.ttsAudioUrls
+        };
+      } else if ((item.ttsStatus === 'pending' || item.ttsStatus === 'processing') && item.ttsTaskId) {
+        abortTTSPoller(item.id);
+        setMainPlaybackState({
+          sessionId: requestId,
+          phase: 'loading',
+          contentKey,
+          itemId: item.id,
+          sceneTag: (item.sceneTag || currentSceneTag) as SceneTag,
+          partIndex: 0,
+          error: undefined
+        });
+        setTTSProgress({
+          stage: item.ttsProgress?.stage || 'processing',
+          message: item.ttsProgress?.message || '正在生成音频...',
+          percentage: item.ttsProgress?.percentage
+        });
 
-      const requestPayload = {
-        // Include both `script` and `text` for backward compatibility across deployments.
-        // - New server: uses `script` for ListenHub/Google decisions.
-        // - Old server: may only accept `text`.
-        script: sanitizedScript,
-        text,
-        preset: isQuickSummary ? 'quick_summary' : isDeepAnalysis ? 'deep_analysis' : undefined,
-        contentType: item.contentType
-      };
-      
-      console.log('[SupplyDepot] Creating TTS task with payload:', JSON.stringify(requestPayload).substring(0, 200) + '...');
-
-      if (!isActiveRequest()) return;
-      const createResponse = await fetch(getApiUrl('/api/tts'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestPayload)
-      });
-      
-      const createData = await createResponse.json();
-      if (!isActiveRequest()) return;
-      
-      if (!createResponse.ok) {
-        throw new Error(createData.error || 'TTS 任务创建失败');
-      }
-      
-      const { taskId } = createData;
-      
-      let result: { url?: string; urls?: string[]; duration?: number };
-
-      // 如果 POST 请求直接返回了结果（如 Google TTS Fallback），则跳过轮询
-      if (createData.status === 'completed' && createData.result) {
-          console.log('[TTS] Task completed immediately', { 
-              provider: createData.provider, 
-              fallbackReason: createData.fallbackReason 
+        try {
+          result = await pollTTSTaskStatus(item.ttsTaskId, item.id, {
+            isActive: isActiveRequest,
+            onProgress: setTTSProgress
           });
-          if (createData.fallbackReason) {
-              console.warn('[TTS] Warning: Fallback occurred:', createData.fallbackReason);
-          }
-          result = createData.result;
           if (!isActiveRequest()) return;
           setTTSProgress(null);
-      } else {
-          if (!taskId) {
-            throw new Error('未收到任务 ID');
+        } catch (err: any) {
+          if (err?.message === 'CANCELLED' || !isActiveRequest()) {
+            return;
           }
-          
-          // 2. 轮询任务状态
-          const pollTaskStatus = async (): Promise<{ url?: string; urls?: string[]; duration?: number }> => {
-            const maxAttempts = 60; // 最多轮询 5 分钟（每 5 秒一次）
-            let attempts = 0;
-            
-            return new Promise((resolve, reject) => {
-              const poll = async () => {
-                try {
-                  if (!isActiveRequest()) {
-                    reject(new Error('CANCELLED'));
-                    return;
-                  }
-                  const statusResponse = await fetch(`${getApiUrl('/api/tts')}?taskId=${taskId}`);
-                  const status = await statusResponse.json();
-                  
-                  if (!isActiveRequest()) {
-                    reject(new Error('CANCELLED'));
-                    return;
-                  }
-                  
-                  // 更新进度显示
-                  if (status.progress) {
-                    setTTSProgress({
-                      stage: status.progress.stage || 'processing',
-                      message: status.progress.message || '处理中...',
-                      percentage: status.progress.percentage
-                    });
-                  }
-                  
-                  if (status.status === 'completed') {
-                    setTTSProgress(null);
-                    if (status.result) {
-                      resolve(status.result);
-                    } else {
-                      reject(new Error('任务完成但未返回结果'));
-                    }
-                  } else if (status.status === 'failed') {
-                    setTTSProgress(null);
-                    reject(new Error(status.error || 'TTS 生成失败'));
-                  } else if (attempts >= maxAttempts) {
-                    setTTSProgress(null);
-                    reject(new Error('TTS 生成超时，请稍后重试'));
-                  } else {
-                    attempts++;
-                    setTimeout(poll, 5000); // 每 5 秒轮询一次，降低频率
-                  }
-                } catch (error: any) {
-                  setTTSProgress(null);
-                  reject(error);
-                }
-              };
-              
-              poll();
+        }
+      }
+
+      if (!result) {
+        setMainPlaybackState({
+          sessionId: requestId,
+          phase: 'loading',
+          contentKey,
+          itemId: item.id,
+          sceneTag: (item.sceneTag || currentSceneTag) as SceneTag,
+          partIndex: 0,
+          error: undefined
+        });
+        setTTSProgress({ stage: 'preparing', message: '准备生成音频...', percentage: 0 });
+        updateFlowItemTTSTask(item.id, {
+          ttsStatus: 'pending',
+          ttsProgress: {
+            stage: 'preparing',
+            message: '准备生成音频...',
+            percentage: 0
+          },
+          ttsError: undefined
+        });
+
+        const requestPayload = {
+          // Include both `script` and `text` for backward compatibility across deployments.
+          // - New server: uses `script` for ListenHub/Google decisions.
+          // - Old server: may only accept `text`.
+          script: payload.script,
+          text: payload.text,
+          preset: payload.preset,
+          contentType: item.contentType
+        };
+        
+        console.log('[SupplyDepot] Creating TTS task with payload:', JSON.stringify(requestPayload).substring(0, 200) + '...');
+
+        if (!isActiveRequest()) return;
+        const createResponse = await fetch(getApiUrl('/api/tts'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestPayload)
+        });
+        
+        const createData = await createResponse.json();
+        if (!isActiveRequest()) return;
+        
+        if (!createResponse.ok) {
+          throw new Error(createData.error || 'TTS 任务创建失败');
+        }
+        
+        const { taskId } = createData;
+
+        // 如果 POST 请求直接返回了结果（如 Google TTS Fallback），则跳过轮询
+        if (createData.status === 'completed' && createData.result) {
+            console.log('[TTS] Task completed immediately', { 
+                provider: createData.provider, 
+                fallbackReason: createData.fallbackReason 
             });
-          };
-          
-          // 3. 等待任务完成并设置音频 URL
-          try {
-            result = await pollTaskStatus();
-          } catch (err: any) {
-            if (err?.message === 'CANCELLED' || !isActiveRequest()) {
-              return;
+            if (createData.fallbackReason) {
+                console.warn('[TTS] Warning: Fallback occurred:', createData.fallbackReason);
             }
-            throw err;
-          }
+            result = createData.result;
+            updateFlowItemTTSTask(item.id, {
+              ttsStatus: 'completed',
+              ttsAudioUrl: createData.result.url,
+              ttsAudioUrls: createData.result.urls,
+              ttsProgress: {
+                stage: 'completed',
+                message: '完成',
+                percentage: 100
+              }
+            });
+            if (!isActiveRequest()) return;
+            setTTSProgress(null);
+        } else {
+            if (!taskId) {
+              throw new Error('未收到任务 ID');
+            }
+
+            updateFlowItemTTSTask(item.id, {
+              ttsTaskId: taskId,
+              ttsStatus: 'pending'
+            });
+
+            try {
+              result = await pollTTSTaskStatus(taskId, item.id, {
+                isActive: isActiveRequest,
+                onProgress: setTTSProgress
+              });
+              if (!isActiveRequest()) return;
+              setTTSProgress(null);
+            } catch (err: any) {
+              if (err?.message === 'CANCELLED' || !isActiveRequest()) {
+                return;
+              }
+              throw err;
+            }
+        }
+      }
+      
+      if (!result) {
+        throw new Error('Invalid API response format');
       }
       
       // 缓存音频
@@ -2452,7 +3089,10 @@ export function SupplyDepotApp({
         
         if (preset && result.url) {
           // 获取音频 Blob
-          const audioResponse = await fetch(result.url.startsWith('data:') ? result.url : `${getApiUrl('/api/proxy-audio')}?url=${encodeURIComponent(result.url)}`);
+          const isLocalUrl = result.url.startsWith('data:') || result.url.startsWith('blob:');
+          const audioResponse = await fetch(
+            isLocalUrl ? result.url : `${getApiUrl('/api/proxy-audio')}?url=${encodeURIComponent(result.url)}`
+          );
           const audioBlob = await audioResponse.blob();
           if (!isActiveRequest()) return;
           
@@ -2470,7 +3110,7 @@ export function SupplyDepotApp({
       if (!isActiveRequest()) return;
       if (result.url) {
         let proxyUrl = result.url;
-        if (!result.url.startsWith('data:')) {
+        if (!result.url.startsWith('data:') && !result.url.startsWith('blob:')) {
           proxyUrl = `${getApiUrl('/api/proxy-audio')}?url=${encodeURIComponent(result.url)}`;
         }
         if (pendingSeekRef.current && pendingSeekRef.current.contentKey === computeContentKey(item)) {
@@ -2498,7 +3138,7 @@ export function SupplyDepotApp({
           .map((u: string | { url?: string }) => (typeof u === 'string' ? u : u.url || ''))
           .filter((u) => u.length > 0)
           .map((u) => {
-            if (u.startsWith('data:')) return u;
+            if (u.startsWith('data:') || u.startsWith('blob:')) return u;
             return `${getApiUrl('/api/proxy-audio')}?url=${encodeURIComponent(u)}`;
           });
 
@@ -2562,6 +3202,43 @@ export function SupplyDepotApp({
     }
   };
 
+  useEffect(() => {
+    if (!selectedItem) {
+      detailAutoPlayRef.current.clear();
+      return;
+    }
+    if (selectedItem.contentType === 'interactive') return;
+
+    const hasCompletedAudio =
+      selectedItem.ttsStatus === 'completed' &&
+      ((selectedItem.ttsAudioUrl && selectedItem.ttsAudioUrl.length > 0) ||
+        (selectedItem.ttsAudioUrls && selectedItem.ttsAudioUrls.length > 0));
+
+    if (!hasCompletedAudio) {
+      detailAutoPlayRef.current.delete(selectedItem.id);
+      return;
+    }
+
+    if (mainPlayback.itemId === selectedItem.id && audioUrl) {
+      return;
+    }
+
+    if (detailAutoPlayRef.current.has(selectedItem.id)) {
+      return;
+    }
+
+    detailAutoPlayRef.current.add(selectedItem.id);
+    handlePlayAudio(selectedItem, false);
+  }, [
+    selectedItem,
+    selectedItem?.ttsStatus,
+    selectedItem?.ttsAudioUrl,
+    selectedItem?.ttsAudioUrls,
+    audioUrl,
+    mainPlayback.itemId,
+    handlePlayAudio
+  ]);
+
   const handleAudioError = (e: any) => {
       console.error("Audio Load Error", e);
       setAudioError("Failed to load audio segment. Network error or format not supported.");
@@ -2583,6 +3260,7 @@ export function SupplyDepotApp({
           onLoadedMetadata={() => {
             if (audioRef.current) {
               setDuration(audioRef.current.duration || 0);
+              applyPendingSeekIfNeeded();
             }
           }}
           onTimeUpdate={() => {
@@ -2941,7 +3619,6 @@ export function SupplyDepotApp({
               console.log('[Cache] 使用缓存的 FlowItem');
               const preparedCachedItem = prepareFlowItem(cachedFlowItem, { assignSlot: true });
               
-              // 模拟生成流程的 loading（3-5 秒）
               setGenerationProgress('正在处理文件...');
               await new Promise(resolve => setTimeout(resolve, 800));
               
@@ -2957,20 +3634,16 @@ export function SupplyDepotApp({
               setGenerationProgress('正在处理结果...');
               await new Promise(resolve => setTimeout(resolve, 400));
               
-              // 延迟后显示结果
               setIsGenerating(false);
               setGenerationProgress('');
               
-              // 直接使用缓存的 flowItem
               let shouldScheduleDefaults = false;
               setFlowItems(prev => {
-                // 检查是否已存在（避免重复添加）
                 const exists = prev.some(item => item.id === preparedCachedItem.id);
                 if (exists) {
                   return prev;
                 }
                 
-                // 检查是否为首次生成 (当列表为空时，视为从 0 到 1 的生成)
                 const isFirstGeneration = prev.length === 0;
                 if (isFirstGeneration) {
                   console.log('[Cache] 首次生成，添加默认 items');
@@ -2981,15 +3654,13 @@ export function SupplyDepotApp({
                 
                 return [...prev, preparedCachedItem];
               });
-
+ 
               if (shouldScheduleDefaults) {
                 scheduleDefaultItemsCompletion();
               }
               
-              // 如果有知识卡片，也更新
               if (preparedCachedItem.knowledgeCards && preparedCachedItem.knowledgeCards.length > 0) {
                 onUpdateKnowledgeCards(prev => {
-                  // 合并知识卡片，避免重复
                   const existingIds = new Set(prev.map((card: KnowledgeCard) => card.id));
                   const newCards = preparedCachedItem.knowledgeCards!
                     .filter((card: KnowledgeCard) => !existingIds.has(card.id))
@@ -3001,12 +3672,13 @@ export function SupplyDepotApp({
                 });
               }
               
-              // 清理已处理的输入
               setArchivedInputs(prev => [...prev, ...rawInputs]);
               setRawInputs([]);
               setSelectedFiles([]);
+              setReadyToFlow(true);
+              setShowInputPanel(false);
               
-              return; // 使用缓存，跳过正常流程
+              return;
             }
           } catch (error) {
             console.error('[Cache] 检查缓存失败:', error);
@@ -3135,10 +3807,10 @@ export function SupplyDepotApp({
                     // Analyze stage and content
                     let currentStage: 'analyzing' | 'generating_title' | 'generating_script' | 'generating_cards' = 'analyzing';
                     
-                    if (accumulatedText.includes('"knowledgeCards"')) {
-                        currentStage = 'generating_cards';
-                    } else if (accumulatedText.includes('"podcastScript"')) {
+                    if (accumulatedText.includes('"podcastScript"')) {
                         currentStage = 'generating_script';
+                    } else if (accumulatedText.includes('"knowledgeCards"')) {
+                        currentStage = 'generating_cards';
                     } else if (accumulatedText.includes('"title"')) {
                         currentStage = 'generating_title';
                     }
@@ -3146,7 +3818,7 @@ export function SupplyDepotApp({
                     // Extract script items
                     // Look for {"speaker": "...", "text": "..."} pattern
                     // We use a regex that handles escaped quotes and newlines in text
-                    const scriptRegex = /\{\s*"speaker"\s*:\s*"([^"]+)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\[\s\S])*)"\s*\}/g;
+                    const scriptRegex = /\{\s*"speaker"\s*:\s*"([^"]+)"\s*,\s*"(?:text|content)"\s*:\s*"((?:[^"\\]|\\[\s\S])*)"\s*\}/g;
                     const scriptItems: Array<{speaker: string, text: string}> = [];
                     let match;
                     
@@ -3345,6 +4017,8 @@ export function SupplyDepotApp({
           }
           return [...newFlowItems, ...prev];
         });
+
+        schedulePreGenerateTTS(preparedAiFlowItem);
 
         // 尝试启动预生成 items 的动画更新
         // 这里无法直接知道是否添加了 items，但运行更新逻辑是安全的（找不到 item 会忽略）
@@ -3783,6 +4457,14 @@ export function SupplyDepotApp({
                                       <Loader2 size={10} className="animate-spin" />
                                       <span>{item.generationProgress || '正在生成中...'}</span>
                                     </div>
+                                  ) : item.ttsStatus === 'pending' || item.ttsStatus === 'processing' ? (
+                                    <div className="flex items-center gap-1.5 text-[9px] text-blue-500 font-medium mt-0.5">
+                                      <Loader2 size={10} className="animate-spin" />
+                                      <span>
+                                        TTS 音频预加载中...
+                                        {item.ttsProgress?.percentage !== undefined && ` ${item.ttsProgress.percentage}%`}
+                                      </span>
+                                    </div>
                                   ) : (
                                     <span className="text-[9px] text-slate-400 font-medium line-clamp-1 group-hover:text-slate-500 transition-colors">
                                         {item.tldr || "点击查看详情..."}
@@ -4036,6 +4718,23 @@ export function SupplyDepotApp({
                                     <Mic2 size={18} />
                                     Start Live Practice
                                 </button>
+                              ) : selectedItem.ttsStatus === 'processing' || selectedItem.ttsStatus === 'pending' ? (
+                                <div className="w-full flex flex-col items-center gap-4 py-6 bg-black/20 rounded-2xl border border-white/10">
+                                  <Loader2 size={24} className="animate-spin text-indigo-400" />
+                                  <div className="flex flex-col items-center gap-2 w-full px-4">
+                                    <span className="text-sm text-white font-medium">
+                                      {selectedItem.ttsProgress?.message || '正在生成音频...'}
+                                    </span>
+                                    {selectedItem.ttsProgress?.percentage !== undefined && (
+                                      <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                                        <div
+                                          className="h-full bg-indigo-500 transition-all duration-300"
+                                          style={{ width: `${selectedItem.ttsProgress.percentage}%` }}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               ) : (
                                   audioUrl ? (
                               <div className="w-full flex flex-col">
@@ -4175,7 +4874,7 @@ export function SupplyDepotApp({
                           )}
 
                           {/* TTS 生成进度显示 */}
-                          {ttsProgress && (
+                          {selectedItem.ttsStatus !== 'processing' && selectedItem.ttsStatus !== 'pending' && ttsProgress && (
                               <div className="mt-4 w-full">
                                   <div className="flex items-center gap-2 mb-2">
                                       <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />

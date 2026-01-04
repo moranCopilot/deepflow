@@ -62,21 +62,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return `${speaker}: ${entry.text}`;
     }).join('\n');
 
-    const prompt = `你是一位学习助手。请总结以下最近的对话内容，生成一张简洁的知识小票。
+    const prompt = `你是一位学习助手。请基于以下对话生成一张知识卡片，严格遵循知识卡片格式规范。
 
 对话内容：
 ${conversationText}
 
-要求：
-1. 提取对话中的核心知识点或重要信息
-2. 格式化为知识小票格式（title + content）
-3. 内容简洁明了，适合小票显示（不超过200字）
-4. 如果对话中没有明确的知识点，可以总结对话的主要话题或关键信息
-5. 返回 JSON 格式：
+【知识卡片格式规范 - 必须严格遵循】
+1. 内容要求：
+- 只提取具体事实性内容（不要全局评论、一般性总结或框架级描述）
+- 每张卡片只聚焦一个概念
+- 解释必须简洁、事实性
+2. 格式结构：
+- type: 固定为 "knowledgeCard"
+- title: 概念名称（简洁明了，如“虚拟语气”“勾股定理”）
+- content: 具体的事实性解释，必须包含：
+  * 核心定义或要点
+  * 关键细节、数字、日期等具体信息（如适用）
+  * 来源标记（必须包含 "Source: 实时对话"）
+- tags: 相关标签数组（如 ["英语", "语法"]）
+3. 示例格式：
 {
-  "title": "知识小票标题（简短，不超过20字）",
-  "content": "内容总结（简洁，重点突出）",
-  "tags": ["标签1", "标签2"]
+  "type": "knowledgeCard",
+  "title": "虚拟语气",
+  "content": "用于表达假设、愿望或与事实相反的情况。正确用法：If I were you...（如果我是你）。错误用法：If I was you...。Source: 实时对话",
+  "tags": ["英语", "语法", "虚拟语气"]
 }
 
 请直接返回 JSON，不要包含其他文字。`;
@@ -100,27 +109,32 @@ ${conversationText}
       console.error("Failed to parse summary response:", parseError);
       console.log("Raw response:", text);
       // 如果解析失败，创建一个默认的总结内容
-      summaryData = {
-        title: "对话总结",
-        content: conversationHistory.length > 0 
-          ? `最近的对话包含 ${conversationHistory.length} 轮交流，主要讨论了相关话题。`
-          : "暂无总结内容",
-        tags: ["对话", "总结"]
-      };
+        summaryData = {
+          type: "knowledgeCard",
+          title: "对话知识点",
+          content: conversationHistory.length > 0 
+            ? `从最近 ${conversationHistory.length} 轮对话中提取的知识点尚不明确。Source: 实时对话`
+            : "暂无可提取的知识点。Source: 实时对话",
+          tags: ["对话", "知识点"]
+        };
     }
 
     // 确保返回格式正确
+    if (!summaryData.type) {
+      summaryData.type = "knowledgeCard";
+    }
     if (!summaryData.title) {
-      summaryData.title = "对话总结";
+      summaryData.title = "对话知识点";
     }
     if (!summaryData.content) {
-      summaryData.content = "暂无总结内容";
+      summaryData.content = "暂无可提取的知识点。Source: 实时对话";
     }
     if (!summaryData.tags || !Array.isArray(summaryData.tags)) {
-      summaryData.tags = ["对话", "总结"];
+      summaryData.tags = ["对话", "知识点"];
     }
 
     res.json({
+      type: summaryData.type,
       title: summaryData.title,
       content: summaryData.content,
       tags: summaryData.tags

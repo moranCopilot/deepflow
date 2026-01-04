@@ -21,8 +21,8 @@ export interface PrinterDeviceProps {
 function calculatePaperPosition(
   index: number, 
   total: number, 
-  baseOffset: number = 20,
-  spacing: number = 140
+  baseOffset: number = 12,
+  spacing: number = 100
 ) {
   // 反转索引：让最新的（数组末尾的）在更靠上的位置
   // 索引 0（最旧的）在最下面，索引越大（越新的）越靠上
@@ -30,7 +30,7 @@ function calculatePaperPosition(
   
   // 垂直偏移：反转后的索引越小，位置越靠下（verticalOffset 越大）
   // 轻微压缩间距（模拟重力挤压）
-  const compressionFactor = Math.min(1 + reversedIndex * 0.02, 1.1); // 最多压缩10%
+  const compressionFactor = Math.min(1 + reversedIndex * 0.015, 1.08); // 轻微压缩堆叠间距
   const verticalOffset = baseOffset + reversedIndex * spacing * compressionFactor;
   
   // 改进的伪随机水平偏移：生成更均匀分布在中心附近的值
@@ -127,7 +127,7 @@ export function PrinterDevice({
                       }}
                       className="absolute w-48 border border-neutral-200/80 p-4 text-[10px] font-mono text-neutral-700 origin-top pointer-events-none"
                       style={{
-                        bottom: -140,
+                        bottom: -110,
                         left: '50%',
                         marginLeft: '-96px', // w-48 = 192px, 所以 marginLeft 应该是 -96px 来居中
                         zIndex: zIndex,
