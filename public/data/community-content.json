@@ -8,8 +8,8 @@
       "tags": ["冥想", "睡眠", "放松"],
       "author": {
         "id": "official",
-        "name": "DeepFlow 官方",
-        "avatar": "/assets/pgc-avatar.png"
+        "name": "学而思",
+        "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=Xueersi"
       },
       "items": [
         {
@@ -36,8 +36,8 @@
       "tags": ["音乐", "放松", "午休"],
       "author": {
         "id": "official",
-        "name": "DeepFlow 官方",
-        "avatar": "/assets/pgc-avatar.png"
+        "name": "学而思",
+        "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=Xueersi"
       },
       "items": [
         {
@@ -64,8 +64,8 @@
       "tags": ["科技", "资讯", "时事"],
       "author": {
         "id": "official",
-        "name": "DeepFlow 官方",
-        "avatar": "/assets/pgc-avatar.png"
+        "name": "学而思",
+        "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=Xueersi"
       },
       "items": [
         {

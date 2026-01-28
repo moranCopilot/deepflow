@@ -137,68 +137,74 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
 
       {/* 列表内容 */}
       <div className="flex-1 overflow-y-auto no-scrollbar p-4 pb-28">
-        {/* PGC 区域 - 单列卡片 */}
-        {activeSection !== 'ugc' && communityData.pgc.length > 0 && (
-          <div className="mb-4">
-            {filteredLists.filter(list => list.isPGC).map(list => (
-              <PGCCard key={list.id} list={list} onClick={() => setSelectedList(list)} />
-            ))}
-          </div>
-        )}
+        {/* 统一网格布局 */}
+        <div className="grid grid-cols-2 gap-4">
+          {filteredLists.map(list => {
+            const mainSceneTag = list.items[0]?.sceneTag || 'default';
+            const sceneConfig = SCENE_CONFIGS[mainSceneTag as SceneTag] || SCENE_CONFIGS['default'];
+            const Icon = sceneConfig.icon;
+            const colorClass = SCENE_COLORS[mainSceneTag] || SCENE_COLORS['default'];
+            const isPGC = list.isPGC;
 
-        {/* UGC 网格 */}
-        {activeSection !== 'pgc' && (
-          <div className="grid grid-cols-2 gap-4">
-            {filteredLists.filter(list => !list.isPGC).map(list => {
-              const mainSceneTag = list.items[0]?.sceneTag || 'default';
-              const sceneConfig = SCENE_CONFIGS[mainSceneTag as SceneTag] || SCENE_CONFIGS['default'];
-              const Icon = sceneConfig.icon;
-              const colorClass = SCENE_COLORS[mainSceneTag] || SCENE_COLORS['default'];
-
-              return (
-                <div
-                  key={list.id}
-                  onClick={() => setSelectedList(list)}
-                  className="bg-white rounded-2xl overflow-hidden shadow-sm border border-slate-100 active:scale-95 transition-all duration-200"
-                >
-                  {/* 封面 */}
-                  <div className="aspect-square w-full relative">
-                    {list.coverImage ? (
-                      <img src={list.coverImage} alt={list.title} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className={`w-full h-full bg-gradient-to-br ${colorClass} flex items-center justify-center`}>
-                        <Icon size={32} className="text-white opacity-80" />
-                      </div>
-                    )}
-                    <div className="absolute top-2 right-2 bg-black/20 backdrop-blur-sm text-white text-[10px] px-1.5 py-0.5 rounded-md flex items-center gap-1">
-                      <Play size={8} fill="currentColor" />
-                      {list.playCount}
+            return (
+              <div
+                key={list.id}
+                onClick={() => setSelectedList(list)}
+                className={clsx(
+                  "rounded-2xl overflow-hidden shadow-sm border active:scale-95 transition-all duration-200",
+                  isPGC
+                    ? "bg-amber-50 border-amber-200"
+                    : "bg-white border-slate-100"
+                )}
+              >
+                {/* 封面 */}
+                <div className="aspect-square w-full relative overflow-hidden">
+                  {list.coverImage ? (
+                    <img src={list.coverImage} alt={list.title} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className={`w-full h-full bg-gradient-to-br ${colorClass} flex items-center justify-center`}>
+                      <Icon size={32} className="text-white opacity-80" />
                     </div>
+                  )}
+                  {/* 右上角播放量 */}
+                  <div className="absolute top-2 right-2 bg-black/40 backdrop-blur-sm text-white text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1">
+                    <Play size={8} fill="currentColor" />
+                    <span className="scale-90 inline-block">{list.playCount}</span>
                   </div>
+                  {/* PGC 学而思标签 */}
+                  {isPGC && (
+                    <div className="absolute top-2 left-2 bg-amber-500/95 backdrop-blur-sm text-white text-[10px] px-2 py-0.5 rounded-md font-bold shadow-sm">
+                      学而思
+                    </div>
+                  )}
+                </div>
 
-                  {/* 信息 */}
-                  <div className="p-3">
-                    <h3 className="font-bold text-slate-800 text-sm line-clamp-2 mb-1 h-10">
-                      {list.title}
-                    </h3>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        {list.author.avatar && (
-                          <img src={list.author.avatar} alt={list.author.name} className="w-4 h-4 rounded-full" />
-                        )}
-                        <span className="text-[10px] text-slate-500 truncate max-w-[60px]">{list.author.name}</span>
-                      </div>
-                      <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                        <Heart size={10} />
-                        {list.likeCount}
-                      </div>
+                {/* 信息 */}
+                <div className="p-3 flex flex-col">
+                  <h3 className="font-bold text-slate-800 text-sm line-clamp-2 leading-tight mb-2 min-h-[2.5em]">
+                    {list.title}
+                  </h3>
+                  <div className="flex items-center justify-between mt-auto">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {list.author.avatar ? (
+                        <img src={list.author.avatar} alt={list.author.name} className="w-4 h-4 rounded-full flex-shrink-0" />
+                      ) : (
+                        <div className="w-4 h-4 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
+                          <span className="text-[8px] text-slate-500 font-bold">{list.author.name?.[0] || '?'}</span>
+                        </div>
+                      )}
+                      <span className="text-[10px] text-slate-500 truncate">{list.author.name}</span>
+                    </div>
+                    <div className="flex items-center gap-0.5 text-[10px] text-slate-400 flex-shrink-0">
+                      <Heart size={9} />
+                      <span>{list.likeCount}</span>
                     </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+              </div>
+            );
+          })}
+        </div>
 
         {filteredLists.length === 0 && (
           <div className="flex flex-col items-center justify-center h-64 text-slate-400">
@@ -206,64 +212,6 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
             <p className="text-sm">没有找到相关内容</p>
           </div>
         )}
-      </div>
-    </div>
-  );
-};
-
-/* ========== PGC 卡片组件 ========== */
-
-interface PGCCardProps {
-  list: SharedFlowList;
-  onClick: () => void;
-}
-
-const PGCCard: React.FC<PGCCardProps> = ({ list, onClick }) => {
-  const mainSceneTag = list.items[0]?.sceneTag || 'default';
-  const sceneConfig = SCENE_CONFIGS[mainSceneTag as SceneTag] || SCENE_CONFIGS['default'];
-
-  return (
-    <div
-      onClick={onClick}
-      className="bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-200 rounded-2xl p-4 mb-3 active:scale-[0.98] transition-all"
-    >
-      <div className="flex items-center gap-2 mb-2">
-        <span className="bg-amber-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">
-          官方精选
-        </span>
-        <span className="text-[10px] text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">
-          {sceneConfig.label}
-        </span>
-      </div>
-      <h3 className="font-bold text-slate-800 text-base mb-1">{list.title}</h3>
-      <p className="text-xs text-slate-600 line-clamp-2 mb-3">{list.description}</p>
-
-      {/* 标签 */}
-      {list.tags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-3">
-          {list.tags.slice(0, 3).map(tag => (
-            <span key={tag} className="text-[10px] text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded">
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* 底部信息 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 text-[10px] text-slate-500">
-          {list.items[0] && (
-            <>
-              <span>{list.items[0].duration}</span>
-              <span>•</span>
-              <span>{list.items.length} 个内容</span>
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-1 text-[10px] text-amber-600">
-          <Heart size={12} />
-          {list.likeCount}
-        </div>
       </div>
     </div>
   );

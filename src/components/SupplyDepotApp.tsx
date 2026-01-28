@@ -1,7 +1,6 @@
 import { useState, useRef, type Dispatch, type SetStateAction, useEffect, useMemo } from 'react';
 import { Camera, FileText, Mic, Play, Pause, Loader2, Sparkles, Brain, Library, X, AlignLeft, Plus, AlertCircle, Mic2, Square, Copy, Check, Trash2, Share2 } from 'lucide-react';
 import clsx from 'clsx';
-import { motion, AnimatePresence } from 'framer-motion';
 import { useLiveSession } from '../hooks/useLiveSession';
 import { PackingAnimation } from './PackingAnimation';
 import { getApiUrl } from '../utils/api-config';
@@ -11,6 +10,9 @@ import Hls from 'hls.js';
 import { type SceneTag, SCENE_CONFIGS, SLOT_DEFINITIONS, type SlotDefinition, type SlotId, type FormType } from '../config/scene-config';
 import { SceneWheel } from './SceneWheel';
 import { FlowRewardDisplay } from './FlowRewardDisplay';
+import { ItemIndicator } from './ItemIndicator';
+import { SwipeableTitle } from './SwipeableTitle';
+import { OnboardingGuide } from './OnboardingGuide';
 import { useRewardSystem } from '../hooks/useRewardSystem';
 import { BottomNavigation } from './BottomNavigation';
 import { CommunityPage } from './CommunityPage';
@@ -1515,6 +1517,7 @@ export function SupplyDepotApp({
   const [currentPlayingItem, setCurrentPlayingItem] = useState<FlowItem | null>(null);
   const [isUserInitiatedPlay, setIsUserInitiatedPlay] = useState(false); // 标记是否是用户手动触发的播放
   const [hasAutoPlayed, setHasAutoPlayed] = useState(false);
+  const [currentSceneItemIndex, setCurrentSceneItemIndex] = useState(0); // 当前场景内的 item 索引
 
   // Live Session State
   const [isLiveMode, setIsLiveMode] = useState(false);
@@ -1936,6 +1939,11 @@ export function SupplyDepotApp({
     // Only include scenes that have playable items
     return allTags.filter(tag => getPlayableItems(flowItems, tag).length > 0);
   }, [flowItems]);
+
+  // 当前场景的可播放 items
+  const currentScenePlayableItems = useMemo(() => {
+    return getPlayableItems(flowItems, currentSceneTag);
+  }, [flowItems, currentSceneTag]);
 
   const slotGroups = useMemo(() => {
     const groups = SLOT_DEFINITIONS.map((slot) => ({
@@ -3252,6 +3260,18 @@ export function SupplyDepotApp({
       setMainPlaybackState({ phase: 'error', error: '音频加载失败' });
   };
 
+  // 切换当前场景内的 item
+  const handlePlaySceneItem = (index: number) => {
+    const items = currentScenePlayableItems;
+    if (index < 0 || index >= items.length) return;
+
+    const item = items[index];
+    setCurrentSceneItemIndex(index);
+    setCurrentPlayingItem(item);
+    setSelectedItem(item);
+    handlePlayAudio(item);
+  };
+
   const renderAudioPlayer = () => (
       <audio
           ref={audioRef}
@@ -4102,7 +4122,7 @@ export function SupplyDepotApp({
 
     return (
     <div className="space-y-4">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">知识打包 (Pack My Bag)</h3>
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">知识打包</h3>
         <div className="grid grid-cols-3 gap-3">
             <button onClick={() => addRawInput('图片')} className="flex flex-col items-center gap-2 p-3 rounded-2xl bg-slate-50 hover:bg-slate-100 transition-colors active:scale-95">
                 <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center">
@@ -4211,9 +4231,11 @@ export function SupplyDepotApp({
   // Handle audio switch when scene changes
   useEffect(() => {
     if (!isFlowing) return;
-    
+
     const playableItems = getPlayableItems(flowItems, currentSceneTag);
       if (playableItems.length > 0) {
+        // 重置 item 索引为 0
+        setCurrentSceneItemIndex(0);
         const firstItem = playableItems[0];
         if (currentPlayingItem?.id !== firstItem.id) {
           if (audioRef.current) {
@@ -4227,6 +4249,7 @@ export function SupplyDepotApp({
         if (currentPlayingItem && !playableItems.some(i => i.id === currentPlayingItem.id)) {
           setCurrentPlayingItem(null);
           setSelectedItem(null);
+          setCurrentSceneItemIndex(0);
           if (audioRef.current) {
             audioRef.current.pause();
           }
@@ -4236,9 +4259,6 @@ export function SupplyDepotApp({
   }, [currentSceneTag, isFlowing]);
 
   if (isFlowing) {
-    const playableItemsForCurrentScene = getPlayableItems(flowItems, currentSceneTag);
-    const hasNoAudioForScene = playableItemsForCurrentScene.length === 0;
-
     return (
       <div className="h-full flex flex-col items-center bg-black text-white p-4 sm:p-6 relative overflow-hidden">
         {renderAudioPlayer()}
@@ -4257,40 +4277,26 @@ export function SupplyDepotApp({
                 <h2 className="text-lg font-light tracking-tight">DeepFlow</h2>
             </div>
 
-            {/* Now Playing Title - Compact & Near Wheel */}
-            <div className="w-full px-4 mb-6 min-h-[2.5rem] flex items-center justify-center">
-                 <AnimatePresence mode="wait">
-                    {currentPlayingItem ? (
-                        <motion.div
-                            key={currentPlayingItem.id}
-                            initial={{ opacity: 0, y: 5 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -5 }}
-                            className="text-center"
-                        >
-                            <h3 className="text-base font-semibold text-white/90 line-clamp-2 leading-snug drop-shadow-md">
-                                {currentPlayingItem.title}
-                            </h3>
-                        </motion.div>
-                    ) : (
-                        <motion.div
-                            key="empty"
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            className="text-sm text-white/30"
-                        >
-                            {hasNoAudioForScene ? "当前场景暂无内容" : "准备播放..."}
-                        </motion.div>
-                    )}
-                 </AnimatePresence>
-            </div>
+            {/* Now Playing Title - 可滑动切换 */}
+            <SwipeableTitle
+              items={currentScenePlayableItems.map(item => ({ id: item.id, title: item.title }))}
+              currentIndex={currentSceneItemIndex}
+              onIndexChange={handlePlaySceneItem}
+              theme="dark"
+            />
             
-            <SceneWheel 
+            <SceneWheel
           currentSceneTag={currentSceneTag}
           onSceneChange={onSceneChange}
           availableScenes={sceneTagsArray}
           theme="dark"
         />
+            <ItemIndicator
+              count={currentScenePlayableItems.length}
+              currentIndex={currentSceneItemIndex}
+              onIndexChange={handlePlaySceneItem}
+              theme="dark"
+            />
         </div>
 
         {/* Bottom Section: Reward Display & End Button */}
@@ -4361,6 +4367,7 @@ export function SupplyDepotApp({
         {flowItems.length === 0 && (
           <div className="bg-white rounded-3xl p-5 shadow-sm space-y-4">
             {renderInputPanel()}
+            <OnboardingGuide />
           </div>
         )}
 
