@@ -25,7 +25,6 @@ export function SwipeableTitle({
   theme = 'dark'
 }: SwipeableTitleProps) {
   const [direction, setDirection] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
   const dragConstraintsRef = useRef(null);
 
   const hasPrev = currentIndex > 0;
@@ -52,7 +51,6 @@ export function SwipeableTitle({
     } else if (info.offset.x < -threshold && hasNext) {
       handleNext();
     }
-    setIsDragging(false);
   };
 
   // 只有一个 item 时只显示标题
@@ -88,7 +86,6 @@ export function SwipeableTitle({
         drag="x"
         dragConstraints={{ left: 0, right: 0 }}
         dragElastic={0.2}
-        onDragStart={() => setIsDragging(true)}
         onDragEnd={handleDragEnd}
         className="w-full max-w-[80%] flex items-center justify-center"
       >
