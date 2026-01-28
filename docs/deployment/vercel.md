@@ -97,3 +97,53 @@ VITE_WS_URL=        # WebSocket URL（如果需要）
 - 检查文件大小（最大 50MB）
 - 检查文件格式是否支持
 - 查看 Vercel 函数日志获取详细错误
+
+---
+
+## 📝 部署检查清单
+
+### 部署前检查
+
+#### Vercel 项目设置
+- [ ] **Framework Preset**: Vite
+- [ ] **Build Command**: `npm run build`
+- [ ] **Output Directory**: `dist`
+- [ ] **Install Command**: `npm install`
+
+#### 环境变量
+- [ ] `GEMINI_API_KEY` 已配置（必需）
+- [ ] `LISTENHUB_API_KEY` 已配置（可选，高质量 TTS）
+
+#### Git 提交
+```bash
+git add .
+git commit -m "Configure Vercel deployment"
+git push
+```
+
+### 部署后验证
+
+#### 1. 健康检查
+```bash
+curl https://your-domain.vercel.app/api/health
+```
+应该返回：`{"status":"ok","message":"DeepFlow Server is running"}`
+
+#### 2. 前端应用
+访问：`https://your-domain.vercel.app`
+应该正常加载前端界面
+
+#### 3. 文件上传测试
+- [ ] 上传一个测试文件
+- [ ] 检查是否能正常分析和生成内容
+- [ ] 验证音频播放功能
+
+### 已知限制
+
+| 限制项 | 说明 |
+|:------|:-----|
+| **WebSocket** | Vercel Serverless Functions 不支持原生 WebSocket，Live Session 使用 HTTP + SSE 替代方案 |
+| **执行时间** | Hobby 计划 10 秒，Pro 计划 60 秒 |
+| **文件大小** | 当前限制 50MB（可在 `api/analyze.ts` 中调整） |
+
+更多故障排查信息，请参考 [Vercel 故障排查指南](../troubleshooting/vercel.md)
