@@ -57,7 +57,7 @@ const HardwareCard = ({
   isActive: boolean, 
   className?: string 
 }) => (
-  <div className={clsx("flex flex-col items-center gap-6 w-full", className)}>
+  <div className={clsx("flex flex-col items-center gap-6 w-full px-2 sm:px-4", className)}>
       <div className="bg-white rounded-[40px] shadow-xl border border-white/50 flex flex-col overflow-hidden relative ring-1 ring-black/5 transition-all duration-500 w-full h-[640px] group hover:shadow-2xl hover:scale-[1.02]">
           <div className="absolute top-6 right-6 px-3 py-1.5 bg-neutral-900/5 rounded-full text-[10px] font-mono text-neutral-500 pointer-events-none z-30 flex items-center gap-2 backdrop-blur-sm border border-white/20">
               <Icon size={12} />
@@ -667,7 +667,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-100 flex flex-col items-center py-12 px-8 font-sans overflow-x-hidden relative">
+    <div className="min-h-screen bg-neutral-100 flex flex-col items-center py-12 px-4 sm:px-6 md:px-8 font-sans overflow-x-hidden relative">
       {/* Scene Background */}
       <SceneBackground 
         backgroundEffect={activeEnvironmentScene ? SCENE_CONFIGS[activeEnvironmentScene].backgroundEffect : null} 
@@ -748,7 +748,7 @@ function App() {
           </div>
 
           {/* Hardware Grid (Right Side - Equal Width) */}
-          <div className="flex-1 w-full max-w-[1150px] grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="flex-1 w-full max-w-[1150px] grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
             
             {/* Headset */}
             <HardwareCard 
