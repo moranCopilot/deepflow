@@ -16,6 +16,39 @@ export interface SharedFlowList {
   likeCount: number;
   createdAt: string;
   updatedAt: string;
+  isPGC?: boolean; // 是否为官方 PGC 内容
+}
+
+/* ========== 外部 JSON 数据结构 ========== */
+
+interface ExternalFlowItem {
+  id: string;
+  title: string;
+  duration: string;
+  type: string;
+  scene: string;
+  audioUrl: string;
+  script?: { speaker: string; text: string }[] | null;
+}
+
+interface ExternalSharedFlowList {
+  id: string;
+  title: string;
+  description: string;
+  coverImage?: string;
+  tags: string[];
+  author: { id: string; name: string; avatar?: string };
+  items: ExternalFlowItem[];
+  playCount: number;
+  likeCount: number;
+  createdAt: string;
+  updatedAt: string;
+  isPGC: boolean;
+}
+
+interface ExternalCommunityData {
+  pgc: ExternalSharedFlowList[];
+  ugc: ExternalSharedFlowList[];
 }
 
 // 辅助函数：生成随机 ID
@@ -28,6 +61,69 @@ const authors = [
   { id: 'u3', name: 'DailyZen', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=DailyZen' },
   { id: 'u4', name: 'TechExplorer', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=TechExplorer' },
 ];
+
+/* ========== 转换函数 ========== */
+
+// 外部格式 → 内部 FlowItem 格式
+const convertExternalItem = (extItem: ExternalFlowItem): FlowItem => ({
+  id: extItem.id,
+  title: extItem.title,
+  duration: extItem.duration,
+  type: extItem.type,
+  tldr: '这是一个示例 FlowItem 的简介...',
+  subtitles: [],
+  status: 'ready',
+  scenes: [extItem.scene],
+  subject: 'general',
+  mode: 'single',
+  contentType: 'output',
+  sceneTag: extItem.scene as any,
+  isGenerating: false,
+  audioUrl: extItem.audioUrl,
+  script: extItem.script || undefined,
+  knowledgeCards: [],
+  playbackProgress: { hasStarted: false }
+});
+
+const convertExternalList = (extList: ExternalSharedFlowList): SharedFlowList => ({
+  id: extList.id,
+  title: extList.title,
+  description: extList.description,
+  coverImage: extList.coverImage,
+  tags: extList.tags,
+  author: extList.author,
+  items: extList.items.map(convertExternalItem),
+  playCount: extList.playCount,
+  likeCount: extList.likeCount,
+  createdAt: extList.createdAt,
+  updatedAt: extList.updatedAt,
+  isPGC: extList.isPGC
+});
+
+/* ========== 数据加载 ========== */
+
+let cachedCommunityData: ExternalCommunityData | null = null;
+
+export const loadCommunityData = async (): Promise<ExternalCommunityData> => {
+  if (cachedCommunityData) {
+    return cachedCommunityData;
+  }
+
+  try {
+    const response = await fetch('/data/community-content.json');
+    if (!response.ok) throw new Error('Failed to fetch');
+    const data = await response.json() as ExternalCommunityData;
+    cachedCommunityData = data;
+    return data;
+  } catch (error) {
+    console.error('Failed to load community data:', error);
+    // 降级到内置 Mock 数据
+    return {
+      pgc: [],
+      ugc: MOCK_COMMUNITY_LISTS.map(list => ({ ...list, isPGC: false, items: [] }))
+    };
+  }
+};
 
 // 创建 Mock FlowItem
 const createMockFlowItem = (title: string, duration: string, type: 'insight' | 'review' | 'meditation', scene: string): FlowItem => ({
@@ -179,12 +275,35 @@ export const MOCK_COMMUNITY_LISTS: SharedFlowList[] = [
   }
 ];
 
+/* ========== 导出函数 ========== */
+
+// 同步版本（降级用）
+export const getCommunityListsSync = () => {
+  return MOCK_COMMUNITY_LISTS;
+};
+
+// 异步版本：加载所有列表
+export const getCommunityLists = async (): Promise<SharedFlowList[]> => {
+  const data = await loadCommunityData();
+  const pgcConverted = data.pgc.map(convertExternalList);
+  const ugcConverted = data.ugc.map(convertExternalList);
+  return [...pgcConverted, ...ugcConverted];
+};
+
+// 异步版本：仅 PGC
+export const getPGCLists = async (): Promise<SharedFlowList[]> => {
+  const data = await loadCommunityData();
+  return data.pgc.map(convertExternalList);
+};
+
+// 异步版本：仅 UGC
+export const getUGCLists = async (): Promise<SharedFlowList[]> => {
+  const data = await loadCommunityData();
+  return data.ugc.map(convertExternalList);
+};
+
 // 本地存储的 mock 数据
 let localCommunityLists = [...MOCK_COMMUNITY_LISTS];
-
-export const getCommunityLists = () => {
-  return localCommunityLists;
-};
 
 export const addCommunityList = (list: SharedFlowList) => {
   localCommunityLists = [list, ...localCommunityLists];
