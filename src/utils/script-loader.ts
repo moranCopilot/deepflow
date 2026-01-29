@@ -43,13 +43,15 @@ export interface ItemScript {
 /* ========== 加载函数 ========== */
 
 /**
- * 加载 UGC Item 的逐字稿 JSON
- * @param itemId Item ID (如 "ugc-1-item-1")
+ * 加载 Item 的逐字稿 JSON (支持 UGC 和 PGC)
+ * @param itemId Item ID (如 "ugc-1-item-1" 或 "pgc-1-item-1")
  * @returns 逐字稿数据，如果加载失败返回 null
  */
 export async function loadItemScript(itemId: string): Promise<ItemScript | null> {
   try {
-    const response = await fetch(`/data/scripts/ugc/${itemId}.json`);
+    // 判断是 UGC 还是 PGC
+    const itemType = itemId.startsWith('pgc-') ? 'pgc' : 'ugc';
+    const response = await fetch(`/data/scripts/${itemType}/${itemId}.json`);
     if (!response.ok) {
       console.warn(`Failed to load script for ${itemId}: ${response.status}`);
       return null;
@@ -63,11 +65,11 @@ export async function loadItemScript(itemId: string): Promise<ItemScript | null>
 }
 
 /**
- * 检查 Item 是否有可用的逐字稿
+ * 检查 Item 是否有可用的逐字稿 (支持 UGC 和 PGC)
  * @param itemId Item ID
  * @returns 是否有逐字稿
  */
 export function hasItemScript(itemId: string): boolean {
-  // 检查是否是 UGC item 格式 (ugc-X-item-Y)
-  return /^ugc-\d+-item-\d+$/.test(itemId);
+  // 检查是否是 UGC 或 PGC item 格式 (ugc-X-item-Y 或 pgc-X-item-Y)
+  return /^(ugc|pgc)-\d+-item-\d+$/.test(itemId);
 }

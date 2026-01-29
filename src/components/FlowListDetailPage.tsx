@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Heart, Clock, User, Sparkles, Play, Volume2 } from 'lucide-react';
+import { ArrowLeft, Heart, Clock, User, Sparkles, Play } from 'lucide-react';
 import clsx from 'clsx';
 import { type SharedFlowList } from '../data/mock-community';
 import { SCENE_CONFIGS, type SceneTag } from '../config/scene-config';
@@ -103,12 +103,11 @@ export const FlowListDetailPage: React.FC<FlowListDetailPageProps> = ({ flowList
         </div>
 
         {/* 列表内容 */}
-        <div className="bg-white p-4 min-h-[300px]">
-          <div className="space-y-3">
-            {flowList.items.map((item, index) => {
+        <div className="bg-white min-h-[300px]">
+          <div>
+            {flowList.items.map((item) => {
               const itemSceneConfig = SCENE_CONFIGS[item.sceneTag as SceneTag] || SCENE_CONFIGS['default'];
               const ItemIcon = itemSceneConfig.icon;
-              const itemColorClass = SCENE_COLORS[item.sceneTag as string] || SCENE_COLORS['default'];
               
               const isPlayable = hasItemScript(item.id);
               return (
@@ -116,44 +115,54 @@ export const FlowListDetailPage: React.FC<FlowListDetailPageProps> = ({ flowList
                   key={item.id}
                   onClick={() => isPlayable && onItemClick?.(item)}
                   className={clsx(
-                    "flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100",
-                    isPlayable && "cursor-pointer hover:bg-slate-100 active:bg-slate-200 transition-colors"
+                    "w-full flex items-center justify-between py-2 px-4 group transition-all border-b border-slate-50 last:border-0",
+                    isPlayable && "cursor-pointer hover:bg-slate-50/60 active:scale-[0.99]"
                   )}
                 >
-                  <div className="relative">
-                    <div className="w-6 text-center text-xs font-bold text-slate-300">
-                      {index + 1}
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    {/* 图标 */}
+                    <div className={clsx(
+                      "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 shadow-sm transition-all duration-300",
+                      "bg-slate-50 text-slate-400 group-hover:bg-white group-hover:shadow-md group-hover:text-indigo-500 group-hover:scale-105"
+                    )}>
+                      <ItemIcon size={18} strokeWidth={1.5} />
                     </div>
-                    {isPlayable && (
-                      <div className="absolute -top-1 -right-1 w-3 h-3 bg-indigo-500 rounded-full flex items-center justify-center">
-                        <Volume2 size={6} className="text-white" />
-                      </div>
-                    )}
-                  </div>
-                  <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${itemColorClass} flex items-center justify-center text-white shrink-0`}>
-                    <ItemIcon size={18} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-bold text-slate-800 truncate">{item.title}</h4>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-100">
-                        {item.duration}
-                      </span>
-                      <span className="text-[10px] text-slate-400">
-                        {itemSceneConfig.label}
-                      </span>
-                      {isPlayable && (
-                        <span className="text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
-                          可播放
+                    
+                    {/* 内容区域 */}
+                    <div className="flex flex-col items-start min-w-0 flex-1">
+                      {/* Category Pills */}
+                      <div className="flex items-center gap-1 mb-0.5">
+                        <span className="text-[9px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md">
+                          {itemSceneConfig.label}
                         </span>
-                      )}
+                        <span className="text-[9px] font-medium text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded-md">
+                          {item.duration}
+                        </span>
+                      </div>
+
+                      {/* 标题 */}
+                      <span className="text-[13px] font-bold leading-snug line-clamp-1 text-slate-800 group-hover:text-slate-900 transition-colors">
+                        {item.title}
+                      </span>
+                      
+                      {/* 副标题 */}
+                      <span className="text-[9px] text-slate-400 font-medium line-clamp-1 group-hover:text-slate-500 transition-colors">
+                        {isPlayable ? '点击播放音频' : '暂无音频'}
+                      </span>
                     </div>
                   </div>
-                  {isPlayable && (
-                    <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center">
-                      <Play size={10} className="text-white ml-0.5" />
+
+                  {/* 播放按钮 */}
+                  <div className="pl-3 py-2">
+                    <div className={clsx(
+                      "w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200",
+                      isPlayable
+                        ? "bg-slate-100 text-slate-400 group-hover:bg-indigo-500 group-hover:text-white group-hover:scale-110 group-hover:shadow-md"
+                        : "bg-slate-50 text-slate-200"
+                    )}>
+                      <Play size={12} fill="currentColor" className="ml-0.5" />
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })}

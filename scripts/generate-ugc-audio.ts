@@ -38,6 +38,7 @@ interface UGCItem {
   audioUrl: string;
   scriptUrl: string;
   mode: string;
+  duration?: string;
 }
 
 interface UGCFlowList {

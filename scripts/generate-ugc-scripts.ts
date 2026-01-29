@@ -240,8 +240,8 @@ function extractJson(text: string): any {
   if (jsonMatch) {
     try {
       return JSON.parse(jsonMatch[0]);
-    } catch (e) {
-      console.error('Failed to parse extracted JSON:', e.message);
+    } catch (e: any) {
+      console.error('Failed to parse extracted JSON:', e.message || e);
     }
   }
 

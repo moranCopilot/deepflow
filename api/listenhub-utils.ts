@@ -4,6 +4,10 @@
 
 // Speaker 名称到 SpeakerId 的映射
 export const SPEAKER_ID_MAP: Record<string, string> = {
+  // PGC 女性
+  '女老师': 'chat-girl-105-cn',
+  'AI导师': 'chat-girl-105-cn',
+  // UGC 原有（保持不变）
   '老师': 'CN-Man-Beijing-V2',
   'Deep': 'CN-Man-Beijing-V2',
   'AI主播': 'CN-Man-Beijing-V2',

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Heart, Play } from 'lucide-react';
+import { Heart, Play } from 'lucide-react';
 import { getPGCLists, getUGCLists, type SharedFlowList } from '../data/mock-community';
 import { SCENE_CONFIGS, type SceneTag } from '../config/scene-config';
 import { FlowListDetailPage } from './FlowListDetailPage';
@@ -27,7 +27,6 @@ type Section = 'all' | 'pgc' | 'ugc';
 export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, initialSelectedListId }) => {
   const [selectedList, setSelectedList] = useState<SharedFlowList | null>(null);
   const [selectedItem, setSelectedItem] = useState<FlowItem | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState<Section>('all');
 
   // 异步加载数据
@@ -73,11 +72,6 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
 
   const allLists = getCurrentLists();
 
-  const filteredLists = allLists.filter(list =>
-    list.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    list.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
-
   if (selectedList) {
     return (
       <div className="h-full bg-[#F2F2F7] relative">
@@ -104,19 +98,9 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
 
   return (
     <div className="h-full bg-[#F2F2F7] flex flex-col">
-      {/* 顶部搜索栏 */}
+      {/* 顶部标题栏 */}
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-200">
         <h1 className="text-xl font-bold text-slate-900 mb-3">社区发现</h1>
-        <div className="relative">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="搜索 FlowList、标签..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-100 border-none rounded-xl py-2 pl-9 pr-4 text-sm focus:ring-2 focus:ring-indigo-500/20"
-          />
-        </div>
 
         {/* 分区 Tab */}
         <div className="flex gap-2 mt-3">
@@ -154,7 +138,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
       <div className="flex-1 overflow-y-auto no-scrollbar p-4 pb-28">
         {/* 统一网格布局 */}
         <div className="grid grid-cols-2 gap-4">
-          {filteredLists.map(list => {
+          {allLists.map(list => {
             const mainSceneTag = list.items[0]?.sceneTag || 'default';
             const sceneConfig = SCENE_CONFIGS[mainSceneTag as SceneTag] || SCENE_CONFIGS['default'];
             const Icon = sceneConfig.icon;
@@ -231,13 +215,6 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
             );
           })}
         </div>
-
-        {filteredLists.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-64 text-slate-400">
-            <Search size={48} className="opacity-20 mb-4" />
-            <p className="text-sm">没有找到相关内容</p>
-          </div>
-        )}
       </div>
     </div>
   );

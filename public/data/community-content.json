@@ -2,13 +2,13 @@
   "pgc": [
     {
       "id": "pgc-1",
-      "title": "睡前冥想：深度放松引导",
-      "description": "专业冥想导师录制的睡前放松音频，帮助你快速进入深度睡眠状态。",
+      "title": "数理化加油站：初中核心考点",
+      "description": "覆盖数学、物理、化学三大理科的中考高频考点，用听的方式帮你吃透概念与题型。",
       "coverImage": null,
       "tags": [
-        "冥想",
-        "睡眠",
-        "放松"
+        "数理化",
+        "初中",
+        "中考"
       ],
       "author": {
         "id": "official",
@@ -18,12 +18,61 @@
       "items": [
         {
           "id": "pgc-1-item-1",
-          "title": "睡前冥想引导",
-          "duration": "10:00",
-          "type": "meditation",
-          "scene": "sleep_meditation",
-          "audioUrl": "/assets/default-audio/sleep-meditation.m4a",
-          "script": null
+          "title": "一次函数与二次函数：图像与性质对比",
+          "duration": "08:00",
+          "type": "insight",
+          "scene": "focus",
+          "audioUrl": "/assets/audio/pgc-1/pgc-1-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/pgc/pgc-1-item-1.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "数学",
+            "aux": [
+              "函数",
+              "初中"
+            ]
+          },
+          "mode": "quick_summary"
+        },
+        {
+          "id": "pgc-1-item-2",
+          "title": "力学三大定律：从受力分析到运动状态",
+          "duration": "08:00",
+          "type": "insight",
+          "scene": "focus",
+          "audioUrl": "/assets/audio/pgc-1/pgc-1-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/pgc/pgc-1-item-2.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "数理化",
+            "aux": [
+              "物理",
+              "初中",
+              "中考"
+            ]
+          },
+          "mode": "quick_summary"
+        },
+        {
+          "id": "pgc-1-item-3",
+          "title": "化学方程式配平与质量守恒定律：从'凑数'到'守恒'的本质飞跃",
+          "duration": "21:00",
+          "type": "insight",
+          "scene": "focus",
+          "audioUrl": "/assets/audio/pgc-1/pgc-1-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/pgc/pgc-1-item-3.json",
+          "knowledgeCardsCount": 6,
+          "contentCategory": {
+            "main": "化学",
+            "aux": [
+              "初中",
+              "中考"
+            ]
+          },
+          "mode": "deep_analysis"
         }
       ],
       "playCount": 5000,
@@ -34,13 +83,13 @@
     },
     {
       "id": "pgc-2",
-      "title": "放松音乐：午间小憩",
-      "description": "精选轻柔音乐，适合午休时间放松身心，恢复精力。",
+      "title": "学习力提升：方法指导与语文素养",
+      "description": "涵盖高效学习法、时间管理技巧，以及古诗文阅读与作文写作的核心能力。",
       "coverImage": null,
       "tags": [
-        "音乐",
-        "放松",
-        "午休"
+        "学习方法",
+        "语文",
+        "素养"
       ],
       "author": {
         "id": "official",
@@ -50,12 +99,61 @@
       "items": [
         {
           "id": "pgc-2-item-1",
-          "title": "放松音乐",
-          "duration": "05:00",
-          "type": "music",
+          "title": "番茄工作法与专注力训练",
+          "duration": "09:00",
+          "type": "insight",
           "scene": "home_charge",
-          "audioUrl": "/assets/default-audio/relax-music.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/pgc-2/pgc-2-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/pgc/pgc-2-item-1.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "学习方法",
+            "aux": [
+              "语文",
+              "素养"
+            ]
+          },
+          "mode": "quick_summary"
+        },
+        {
+          "id": "pgc-2-item-2",
+          "title": "5分钟掌握艾宾浩斯遗忘曲线，让你的复习效率翻倍！",
+          "duration": "10:00",
+          "type": "insight",
+          "scene": "home_charge",
+          "audioUrl": "/assets/audio/pgc-2/pgc-2-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/pgc/pgc-2-item-2.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "学习方法",
+            "aux": [
+              "语文",
+              "素养"
+            ]
+          },
+          "mode": "quick_summary"
+        },
+        {
+          "id": "pgc-2-item-3",
+          "title": "古诗文作文素材：如何写活'家国情怀'？",
+          "duration": "16:00",
+          "type": "insight",
+          "scene": "home_charge",
+          "audioUrl": "/assets/audio/pgc-2/pgc-2-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/pgc/pgc-2-item-3.json",
+          "knowledgeCardsCount": 6,
+          "contentCategory": {
+            "main": "语文",
+            "aux": [
+              "作文",
+              "古诗文",
+              "学习方法"
+            ]
+          },
+          "mode": "deep_analysis"
         }
       ],
       "playCount": 3500,
@@ -66,13 +164,13 @@
     },
     {
       "id": "pgc-3",
-      "title": "科技时事速览",
-      "description": "每日科技资讯精选，快速了解最新科技动态。",
+      "title": "考前加油站：应试技巧与心态调适",
+      "description": "专为考前冲刺设计，包含答题策略、时间分配和心态调整三大核心能力。",
       "coverImage": null,
       "tags": [
-        "科技",
-        "资讯",
-        "时事"
+        "备考",
+        "心态",
+        "应试"
       ],
       "author": {
         "id": "official",
@@ -82,12 +180,61 @@
       "items": [
         {
           "id": "pgc-3-item-1",
-          "title": "科技时事",
-          "duration": "15:00",
-          "type": "tech",
-          "scene": "commute",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "title": "考场时间分配策略与答题顺序",
+          "duration": "08:00",
+          "type": "insight",
+          "scene": "qa_memory",
+          "audioUrl": "/assets/audio/pgc-3/pgc-3-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/pgc/pgc-3-item-1.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "备考",
+            "aux": [
+              "应试技巧",
+              "心态调适"
+            ]
+          },
+          "mode": "quick_summary"
+        },
+        {
+          "id": "pgc-3-item-2",
+          "title": "常见考试失误与避坑指南",
+          "duration": "09:00",
+          "type": "insight",
+          "scene": "qa_memory",
+          "audioUrl": "/assets/audio/pgc-3/pgc-3-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/pgc/pgc-3-item-2.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "学习方法",
+            "aux": [
+              "应试技巧",
+              "心态调适"
+            ]
+          },
+          "mode": "quick_summary"
+        },
+        {
+          "id": "pgc-3-item-3",
+          "title": "考试焦虑自救与积极心态建立：拆解压轴题里的相似三角形",
+          "duration": "33:00",
+          "type": "insight",
+          "scene": "qa_memory",
+          "audioUrl": "/assets/audio/pgc-3/pgc-3-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/pgc/pgc-3-item-3.json",
+          "knowledgeCardsCount": 5,
+          "contentCategory": {
+            "main": "数学",
+            "aux": [
+              "几何",
+              "相似三角形",
+              "心态调整"
+            ]
+          },
+          "mode": "deep_analysis"
         }
       ],
       "playCount": 4200,
