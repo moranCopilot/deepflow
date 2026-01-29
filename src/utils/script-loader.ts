@@ -21,8 +21,8 @@ export interface KnowledgeCard {
 }
 
 export interface ContentCategory {
-  main: string;
-  aux: string[];
+  main?: string;
+  aux?: string[];
 }
 
 export interface ItemScript {

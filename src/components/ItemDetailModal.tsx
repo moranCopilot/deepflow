@@ -6,8 +6,8 @@
  * 变更时更新此头部，然后检查 CLAUDE.md
  */
 
-import React, { useState, useRef, useEffect } from 'react';
-import { X, Play, Pause, Sparkles, Library, AlignLeft, Copy, Check } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { X, Play, Pause, Library, AlignLeft, Copy, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { type FlowItem } from './SupplyDepotApp';
 import { type ItemScript, loadItemScript } from '../utils/script-loader';
@@ -36,11 +36,14 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose 
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [copiedScript, setCopiedScript] = useState(false);
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
+  const [activeLineIndex, setActiveLineIndex] = useState(0);
 
   const audioRef = useRef<HTMLAudioElement>(null);
-  const progressSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const progressSaveTimerRef = useRef<number | null>(null);
   const isPlayingRef = useRef(false);
   const currentTimeRef = useRef(0);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // 加载逐字稿数据
   useEffect(() => {
@@ -149,6 +152,42 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose 
       saveProgress();
     };
   }, [item.id, playbackRate]);
+
+  // 计算当前行索引（平均时长法）
+  const currentLineIndex = useMemo(() => {
+    if (!scriptData || !scriptData.script.length || duration <= 0) return 0;
+    const avgTimePerLine = duration / scriptData.script.length;
+    return Math.min(Math.floor(currentTime / avgTimePerLine), scriptData.script.length - 1);
+  }, [currentTime, duration, scriptData]);
+
+  // 同步 active line index
+  useEffect(() => {
+    setActiveLineIndex(currentLineIndex);
+  }, [currentLineIndex]);
+
+  // 自动滚动到当前行
+  useEffect(() => {
+    if (!isPlaying || currentLineIndex === 0) return;
+
+    const activeLine = document.getElementById(`script-line-${currentLineIndex}`);
+    if (activeLine) {
+      activeLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [currentLineIndex, isPlaying]);
+
+  // 滚动监听，自动收窄播放器
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const threshold = 100;
+      setIsHeaderCollapsed(container.scrollTop > threshold);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // 加载保存的进度
   useEffect(() => {
@@ -277,7 +316,10 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose 
       />
 
       {/* Integrated Header with Player */}
-      <div className="relative bg-slate-900 overflow-hidden">
+      <div className={clsx(
+        "relative bg-slate-900 overflow-hidden transition-all duration-300",
+        isHeaderCollapsed ? "max-h-24" : "max-h-96"
+      )}>
         {/* Gradient Background */}
         <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/50 to-slate-900 z-0" />
 
@@ -293,22 +335,38 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose 
             </button>
           </div>
 
-          {/* Title Section */}
-          <div className="pb-6 px-4">
-            <div className="flex items-center gap-2 mb-2">
-              <span className={clsx(
-                "text-[10px] px-2 py-1 rounded-full font-medium",
-                isDeepAnalysis ? "bg-indigo-500/30 text-indigo-300" : "bg-emerald-500/30 text-emerald-300"
-              )}>
-                {isDeepAnalysis ? "深度剖析" : "速听精华"}
-              </span>
+          {/* Title Section - 收窄时隐藏 */}
+          {!isHeaderCollapsed && (
+            <div className="pb-6 px-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className={clsx(
+                  "text-[10px] px-2 py-1 rounded-full font-medium",
+                  isDeepAnalysis ? "bg-indigo-500/30 text-indigo-300" : "bg-emerald-500/30 text-emerald-300"
+                )}>
+                  {isDeepAnalysis ? "深度剖析" : "速听精华"}
+                </span>
+              </div>
+              <h2 className="font-bold text-lg leading-tight">{cleanTitle}</h2>
             </div>
-            <h2 className="font-bold text-lg leading-tight">{cleanTitle}</h2>
-          </div>
+          )}
+
+          {/* 走马灯字幕 - 始终显示 */}
+          {scriptData.script && scriptData.script.length > 0 && (
+            <div className="px-4 pb-3">
+              <div className="bg-white/10 rounded-lg px-3 py-2 overflow-hidden">
+                <div className="text-xs text-slate-200 truncate">
+                  {scriptData.script[activeLineIndex]?.speaker}: {scriptData.script[activeLineIndex]?.text}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Bottom Section: Player Controls */}
           {item.audioUrl && (
-            <div className="flex flex-col gap-4 w-full px-4 pb-6">
+            <div className={clsx(
+              "flex flex-col gap-4 w-full px-4",
+              isHeaderCollapsed ? "pb-2" : "pb-6"
+            )}>
               {/* Progress Bar */}
               <div className="w-full mb-4">
                 <input
@@ -352,56 +410,14 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose 
                   {playbackRate}×
                 </button>
               </div>
-
-              {/* Script Text - Scrolling Style */}
-              {scriptData.script && scriptData.script.length > 0 && (
-                <div className="mt-4 w-full relative">
-                  <div className="relative bg-white/5 rounded-lg p-3 max-h-32 overflow-y-auto scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
-                    {/* Top gradient fade */}
-                    <div className="absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-slate-900/80 to-transparent pointer-events-none z-10 rounded-t-lg" />
-
-                    {/* Text content */}
-                    <div className="text-xs text-slate-300 leading-snug relative z-0 space-y-2">
-                      {scriptData.script.slice(0, 5).map((line, index) => (
-                        <div key={index}>
-                          <span className="font-semibold text-indigo-400">{line.speaker}:</span> {line.text}
-                        </div>
-                      ))}
-                      {scriptData.script.length > 5 && (
-                        <div className="text-slate-500 italic">...还有 {scriptData.script.length - 5} 行</div>
-                      )}
-                    </div>
-
-                    {/* Bottom gradient fade */}
-                    <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-slate-900/80 to-transparent pointer-events-none z-10 rounded-b-lg" />
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>
       </div>
 
       {/* Scrollable Content */}
-      <div className="flex-1 p-6 overflow-y-auto">
+      <div ref={scrollContainerRef} className="flex-1 p-6 overflow-y-auto">
         <div className="space-y-8">
-          {/* TLDR Section - 从 scriptData 生成 */}
-          {scriptData.script && scriptData.script.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-indigo-600">
-                <Sparkles size={16} />
-                <h3 className="text-xs font-bold uppercase tracking-wider">内容摘要</h3>
-              </div>
-              <div className="bg-indigo-50 p-4 rounded-2xl text-sm text-indigo-900 leading-relaxed">
-                {scriptData.script.slice(0, 3).map((line, i) => (
-                  <div key={i} className="mb-1 last:mb-0">
-                    <span className="font-semibold">{line.speaker}:</span> {line.text.slice(0, 100)}
-                    {line.text.length > 100 && '...'}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* Knowledge Cards Section */}
           {scriptData.knowledgeCards && scriptData.knowledgeCards.length > 0 && (
@@ -463,7 +479,14 @@ export const ItemDetailModal: React.FC<ItemDetailModalProps> = ({ item, onClose 
               </div>
               <div className="space-y-4 bg-slate-50 p-6 rounded-3xl border border-slate-100">
                 {scriptData.script.map((line, i) => (
-                  <div key={i} className="flex flex-col gap-1">
+                  <div
+                    key={i}
+                    id={`script-line-${i}`}
+                    className={clsx(
+                      "flex flex-col gap-1 transition-colors duration-300",
+                      i === activeLineIndex && "bg-indigo-100 -mx-2 px-2 rounded"
+                    )}
+                  >
                     <div className="flex items-center gap-2">
                       <div className={clsx(
                         "w-5 h-5 rounded-full flex items-center justify-center shrink-0 font-bold text-[10px]",
