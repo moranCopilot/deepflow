@@ -3,6 +3,8 @@ import { Search, Heart, Play } from 'lucide-react';
 import { getPGCLists, getUGCLists, type SharedFlowList } from '../data/mock-community';
 import { SCENE_CONFIGS, type SceneTag } from '../config/scene-config';
 import { FlowListDetailPage } from './FlowListDetailPage';
+import { ItemDetailModal } from './ItemDetailModal';
+import { type FlowItem } from './SupplyDepotApp';
 import clsx from 'clsx';
 
 interface CommunityPageProps {
@@ -24,6 +26,7 @@ type Section = 'all' | 'pgc' | 'ugc';
 
 export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, initialSelectedListId }) => {
   const [selectedList, setSelectedList] = useState<SharedFlowList | null>(null);
+  const [selectedItem, setSelectedItem] = useState<FlowItem | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState<Section>('all');
 
@@ -77,13 +80,25 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
 
   if (selectedList) {
     return (
-      <FlowListDetailPage
-        flowList={selectedList}
-        onBack={() => setSelectedList(null)}
-        onImport={(list) => {
-          onImportFlowList(list);
-        }}
-      />
+      <div className="h-full bg-[#F2F2F7] relative">
+        <FlowListDetailPage
+          flowList={selectedList}
+          onBack={() => {
+            setSelectedItem(null);
+            setSelectedList(null);
+          }}
+          onImport={(list) => {
+            onImportFlowList(list);
+          }}
+          onItemClick={(item) => setSelectedItem(item)}
+        />
+        {selectedItem && (
+          <ItemDetailModal
+            item={selectedItem}
+            onClose={() => setSelectedItem(null)}
+          />
+        )}
+      </div>
     );
   }
 
@@ -151,21 +166,32 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
                 key={list.id}
                 onClick={() => setSelectedList(list)}
                 className={clsx(
-                  "rounded-2xl overflow-hidden shadow-sm border active:scale-95 transition-all duration-200",
+                  "rounded-2xl overflow-hidden shadow-md border active:scale-95 transition-all duration-300",
+                  "hover:shadow-lg hover:-translate-y-1",
                   isPGC
                     ? "bg-amber-50 border-amber-200"
                     : "bg-white border-slate-100"
                 )}
               >
                 {/* 封面 */}
-                <div className="aspect-square w-full relative overflow-hidden">
+                <div className="aspect-square w-full relative overflow-hidden group">
                   {list.coverImage ? (
-                    <img src={list.coverImage} alt={list.title} className="w-full h-full object-cover" />
+                    <img
+                      src={list.coverImage}
+                      alt={list.title}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    />
                   ) : (
-                    <div className={`w-full h-full bg-gradient-to-br ${colorClass} flex items-center justify-center`}>
+                    <div className={`w-full h-full bg-gradient-to-br ${colorClass} flex items-center justify-center transition-transform duration-300 group-hover:scale-105`}>
                       <Icon size={32} className="text-white opacity-80" />
                     </div>
                   )}
+                  {/* 悬停播放按钮 */}
+                  <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                    <div className="w-10 h-10 bg-white/90 rounded-full flex items-center justify-center shadow-lg">
+                      <Play size={16} fill="black" className="ml-0.5" />
+                    </div>
+                  </div>
                   {/* 右上角播放量 */}
                   <div className="absolute top-2 right-2 bg-black/40 backdrop-blur-sm text-white text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1">
                     <Play size={8} fill="currentColor" />

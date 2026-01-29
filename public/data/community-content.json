@@ -5,7 +5,11 @@
       "title": "睡前冥想：深度放松引导",
       "description": "专业冥想导师录制的睡前放松音频，帮助你快速进入深度睡眠状态。",
       "coverImage": null,
-      "tags": ["冥想", "睡眠", "放松"],
+      "tags": [
+        "冥想",
+        "睡眠",
+        "放松"
+      ],
       "author": {
         "id": "official",
         "name": "学而思",
@@ -33,7 +37,11 @@
       "title": "放松音乐：午间小憩",
       "description": "精选轻柔音乐，适合午休时间放松身心，恢复精力。",
       "coverImage": null,
-      "tags": ["音乐", "放松", "午休"],
+      "tags": [
+        "音乐",
+        "放松",
+        "午休"
+      ],
       "author": {
         "id": "official",
         "name": "学而思",
@@ -61,7 +69,11 @@
       "title": "科技时事速览",
       "description": "每日科技资讯精选，快速了解最新科技动态。",
       "coverImage": null,
-      "tags": ["科技", "资讯", "时事"],
+      "tags": [
+        "科技",
+        "资讯",
+        "时事"
+      ],
       "author": {
         "id": "official",
         "name": "学而思",
@@ -90,7 +102,12 @@
       "id": "ugc-1",
       "title": "初中数学：必考函数与几何基础",
       "description": "覆盖初中阶段最核心的函数与几何考点，用听的方式帮你吃透概念与题型。",
-      "tags": ["初中", "数学", "函数", "几何"],
+      "tags": [
+        "初中",
+        "数学",
+        "函数",
+        "几何"
+      ],
       "author": {
         "id": "u1",
         "name": "FlowMaster",
@@ -100,29 +117,61 @@
         {
           "id": "ugc-1-item-1",
           "title": "一次函数基础概念与图像特征",
-          "duration": "08:30",
+          "duration": "06:00",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-1/ugc-1-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-1-item-1.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "数学",
+            "aux": [
+              "函数",
+              "初中"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-1-item-2",
           "title": "二元一次方程与实际应用题",
-          "duration": "09:20",
+          "duration": "07:00",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-1/ugc-1-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-1-item-2.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "数学",
+            "aux": [
+              "初中",
+              "代数",
+              "方程"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-1-item-3",
           "title": "三角形相似判定与比例线段",
-          "duration": "10:10",
+          "duration": "9730:12",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-1/ugc-1-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-1-item-3.json",
+          "knowledgeCardsCount": 6,
+          "contentCategory": {
+            "main": "数学",
+            "aux": [
+              "几何",
+              "相似",
+              "中考"
+            ]
+          },
+          "mode": "deep_analysis"
         }
       ],
       "playCount": 1820,
@@ -135,7 +184,12 @@
       "id": "ugc-2",
       "title": "初中物理：力学与电学核心考点",
       "description": "精选初中物理易错与高频考点，用生活化例子讲清楚受力分析、电路与压强。",
-      "tags": ["初中", "物理", "力学", "电学"],
+      "tags": [
+        "初中",
+        "物理",
+        "力学",
+        "电学"
+      ],
       "author": {
         "id": "u2",
         "name": "LearningGeek",
@@ -145,29 +199,60 @@
         {
           "id": "ugc-2-item-1",
           "title": "受力分析与牛顿第一定律",
-          "duration": "07:40",
+          "duration": "09:00",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-2/ugc-2-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-2-item-1.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "物理",
+            "aux": [
+              "初中",
+              "力学",
+              "中考"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-2-item-2",
           "title": "压强与浮力：常见实验题梳理",
-          "duration": "09:05",
+          "duration": "08:00",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-2/ugc-2-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-2-item-2.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "物理",
+            "aux": [
+              "初中",
+              "力学"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-2-item-3",
           "title": "串并联电路与电流电压关系",
-          "duration": "11:20",
+          "duration": "11696:24",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-2/ugc-2-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-2-item-3.json",
+          "knowledgeCardsCount": 5,
+          "contentCategory": {
+            "main": "物理",
+            "aux": [
+              "电学",
+              "电路分析"
+            ]
+          },
+          "mode": "deep_analysis"
         }
       ],
       "playCount": 1560,
@@ -180,7 +265,12 @@
       "id": "ugc-3",
       "title": "初中化学：方程式与基本实验安全",
       "description": "从零开始带你熟悉化学符号、常见反应方程式和必考实验现象，打牢入门基础。",
-      "tags": ["初中", "化学", "方程式", "实验"],
+      "tags": [
+        "初中",
+        "化学",
+        "方程式",
+        "实验"
+      ],
       "author": {
         "id": "u3",
         "name": "DailyZen",
@@ -190,29 +280,60 @@
         {
           "id": "ugc-3-item-1",
           "title": "常见元素符号与化合价快速记忆",
-          "duration": "06:30",
+          "duration": "09:00",
           "type": "insight",
           "scene": "home_charge",
-          "audioUrl": "/assets/default-audio/relax-music.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-3/ugc-3-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-3-item-1.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "化学",
+            "aux": [
+              "初中",
+              "基础知识"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-3-item-2",
           "title": "化学方程式配平的三种常用方法",
-          "duration": "09:50",
+          "duration": "11022:00",
           "type": "insight",
           "scene": "home_charge",
-          "audioUrl": "/assets/default-audio/relax-music.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-3/ugc-3-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-3-item-2.json",
+          "knowledgeCardsCount": 5,
+          "contentCategory": {
+            "main": "化学",
+            "aux": [
+              "中考化学",
+              "实验基础"
+            ]
+          },
+          "mode": "deep_analysis"
         },
         {
           "id": "ugc-3-item-3",
           "title": "实验安全与气体制取现象汇总",
-          "duration": "08:40",
+          "duration": "09:00",
           "type": "review",
           "scene": "home_charge",
-          "audioUrl": "/assets/default-audio/relax-music.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-3/ugc-3-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-3-item-3.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "化学",
+            "aux": [
+              "初中",
+              "实验",
+              "中考"
+            ]
+          },
+          "mode": "quick_summary"
         }
       ],
       "playCount": 1430,
@@ -225,7 +346,12 @@
       "id": "ugc-4",
       "title": "高中数学：函数、导数与不等式",
       "description": "围绕高考常考的函数、导数与不等式专题，帮助你在刷题前先理顺知识结构。",
-      "tags": ["高中", "数学", "函数", "导数"],
+      "tags": [
+        "高中",
+        "数学",
+        "函数",
+        "导数"
+      ],
       "author": {
         "id": "u4",
         "name": "TechExplorer",
@@ -235,29 +361,62 @@
         {
           "id": "ugc-4-item-1",
           "title": "解析几何中的一次函数与二次函数模型",
-          "duration": "11:30",
+          "duration": "10:00",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-4/ugc-4-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-4-item-1.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "数学",
+            "aux": [
+              "高中",
+              "函数",
+              "导数"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-4-item-2",
           "title": "导数在单调性与极值中的经典用法",
-          "duration": "12:20",
+          "duration": "12555:00",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-4/ugc-4-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-4-item-2.json",
+          "knowledgeCardsCount": 5,
+          "contentCategory": {
+            "main": "数学",
+            "aux": [
+              "函数",
+              "导数",
+              "不等式"
+            ]
+          },
+          "mode": "deep_analysis"
         },
         {
           "id": "ugc-4-item-3",
           "title": "基本不等式与放缩技巧精讲",
-          "duration": "10:15",
+          "duration": "09:00",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-4/ugc-4-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-4-item-3.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "数学",
+            "aux": [
+              "高中",
+              "函数",
+              "导数"
+            ]
+          },
+          "mode": "quick_summary"
         }
       ],
       "playCount": 2100,
@@ -270,7 +429,12 @@
       "id": "ugc-5",
       "title": "高中语文：作文素材与名篇精读",
       "description": "精选适合高考作文的中国教育与青春成长主题素材，配合名篇段落精读讲解。",
-      "tags": ["高中", "语文", "作文", "阅读理解"],
+      "tags": [
+        "高中",
+        "语文",
+        "作文",
+        "阅读理解"
+      ],
       "author": {
         "id": "u2",
         "name": "LearningGeek",
@@ -280,29 +444,62 @@
         {
           "id": "ugc-5-item-1",
           "title": "教育公平与成长故事：高分立意拆解",
-          "duration": "07:20",
+          "duration": "9884:24",
           "type": "insight",
           "scene": "qa_memory",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-5/ugc-5-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-5-item-1.json",
+          "knowledgeCardsCount": 6,
+          "contentCategory": {
+            "main": "高中语文",
+            "aux": [
+              "作文立意",
+              "素材运用",
+              "非连续性文本阅读"
+            ]
+          },
+          "mode": "deep_analysis"
         },
         {
           "id": "ugc-5-item-2",
           "title": "如何在作文中自然引用古诗文",
-          "duration": "06:40",
+          "duration": "07:00",
           "type": "insight",
           "scene": "qa_memory",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-5/ugc-5-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-5-item-2.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "高中语文",
+            "aux": [
+              "作文",
+              "古诗文",
+              "备考技巧"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-5-item-3",
           "title": "议论文常见论证结构与过渡句式",
-          "duration": "08:10",
+          "duration": "08:00",
           "type": "insight",
           "scene": "qa_memory",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-5/ugc-5-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-5-item-3.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "语文",
+            "aux": [
+              "高中",
+              "作文",
+              "阅读理解"
+            ]
+          },
+          "mode": "quick_summary"
         }
       ],
       "playCount": 2680,
@@ -315,7 +512,12 @@
       "id": "ugc-6",
       "title": "高中英语：完形与阅读高频词汇",
       "description": "围绕完形填空与阅读理解中高频出现的教育、校园与学习主题词汇展开讲解。",
-      "tags": ["高中", "英语", "词汇", "阅读"],
+      "tags": [
+        "高中",
+        "英语",
+        "词汇",
+        "阅读"
+      ],
       "author": {
         "id": "u1",
         "name": "FlowMaster",
@@ -325,29 +527,62 @@
         {
           "id": "ugc-6-item-1",
           "title": "校园生活与课堂场景高频词",
-          "duration": "09:00",
+          "duration": "11:00",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-6/ugc-6-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-6-item-1.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "英语",
+            "aux": [
+              "高考",
+              "词汇",
+              "完形填空"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-6-item-2",
           "title": "教育议题类阅读常见表达",
-          "duration": "08:30",
+          "duration": "09:00",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-6/ugc-6-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-6-item-2.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "英语",
+            "aux": [
+              "高中",
+              "阅读理解",
+              "完形填空"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-6-item-3",
           "title": "完形填空中易混近义词辨析",
-          "duration": "10:40",
+          "duration": "10393:12",
           "type": "insight",
           "scene": "focus",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-6/ugc-6-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-6-item-3.json",
+          "knowledgeCardsCount": 5,
+          "contentCategory": {
+            "main": "英语",
+            "aux": [
+              "完形填空",
+              "词汇辨析",
+              "阅读理解"
+            ]
+          },
+          "mode": "deep_analysis"
         }
       ],
       "playCount": 1930,
@@ -360,7 +595,12 @@
       "id": "ugc-7",
       "title": "中考总复习：政治与历史主干线",
       "description": "精选中考思想品德与中国历史的主干知识线，适合睡前或碎片时间反复听背。",
-      "tags": ["初中", "中考", "道德与法治", "历史"],
+      "tags": [
+        "初中",
+        "中考",
+        "道德与法治",
+        "历史"
+      ],
       "author": {
         "id": "u3",
         "name": "DailyZen",
@@ -370,29 +610,61 @@
         {
           "id": "ugc-7-item-1",
           "title": "中国近代史重要事件时间轴",
-          "duration": "12:00",
+          "duration": "12036:36",
           "type": "review",
           "scene": "qa_memory",
-          "audioUrl": "/assets/default-audio/sleep-meditation.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-7/ugc-7-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-7-item-1.json",
+          "knowledgeCardsCount": 5,
+          "contentCategory": {
+            "main": "历史",
+            "aux": [
+              "道德与法治",
+              "中考复习"
+            ]
+          },
+          "mode": "deep_analysis"
         },
         {
           "id": "ugc-7-item-2",
           "title": "公民权利与义务核心考点串讲",
-          "duration": "11:10",
+          "duration": "06:00",
           "type": "review",
           "scene": "qa_memory",
-          "audioUrl": "/assets/default-audio/sleep-meditation.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-7/ugc-7-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-7-item-2.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "道德与法治",
+            "aux": [
+              "中考",
+              "初中",
+              "法律常识"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-7-item-3",
           "title": "世界多极化与经济全球化要点",
-          "duration": "09:30",
+          "duration": "07:00",
           "type": "review",
           "scene": "qa_memory",
-          "audioUrl": "/assets/default-audio/sleep-meditation.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-7/ugc-7-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-7-item-3.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "道德与法治",
+            "aux": [
+              "历史",
+              "初中",
+              "中考"
+            ]
+          },
+          "mode": "quick_summary"
         }
       ],
       "playCount": 2240,
@@ -405,7 +677,12 @@
       "id": "ugc-8",
       "title": "高考冲刺：理综错题回顾与心态调整",
       "description": "将物理、化学、生物中的典型易错题用音频方式再过一遍，配合简单的考试心态调整练习。",
-      "tags": ["高中", "高考", "理综", "备考"],
+      "tags": [
+        "高中",
+        "高考",
+        "理综",
+        "备考"
+      ],
       "author": {
         "id": "u4",
         "name": "TechExplorer",
@@ -415,29 +692,61 @@
         {
           "id": "ugc-8-item-1",
           "title": "物理解题中常见的受力漏画点",
-          "duration": "06:50",
+          "duration": "08:00",
           "type": "insight",
           "scene": "commute",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-8/ugc-8-item-1.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-8-item-1.json",
+          "knowledgeCardsCount": 3,
+          "contentCategory": {
+            "main": "物理",
+            "aux": [
+              "高中",
+              "高考"
+            ]
+          },
+          "mode": "quick_summary"
         },
         {
           "id": "ugc-8-item-2",
           "title": "化学计算题比例与守恒思路",
-          "duration": "07:30",
+          "duration": "14294:24",
           "type": "insight",
           "scene": "commute",
-          "audioUrl": "/assets/default-audio/tech-news.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-8/ugc-8-item-2.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-8-item-2.json",
+          "knowledgeCardsCount": 5,
+          "contentCategory": {
+            "main": "化学",
+            "aux": [
+              "高考备考",
+              "解题技巧",
+              "理综"
+            ]
+          },
+          "mode": "deep_analysis"
         },
         {
           "id": "ugc-8-item-3",
           "title": "生物选择题审题陷阱与排除法",
-          "duration": "06:40",
+          "duration": "09:00",
           "type": "meditation",
           "scene": "sleep_meditation",
-          "audioUrl": "/assets/default-audio/sleep-meditation.m4a",
-          "script": null
+          "audioUrl": "/assets/audio/ugc-8/ugc-8-item-3.mp3",
+          "script": null,
+          "scriptUrl": "/data/scripts/ugc/ugc-8-item-3.json",
+          "knowledgeCardsCount": 4,
+          "contentCategory": {
+            "main": "生物",
+            "aux": [
+              "高考",
+              "解题技巧",
+              "理综"
+            ]
+          },
+          "mode": "quick_summary"
         }
       ],
       "playCount": 3050,

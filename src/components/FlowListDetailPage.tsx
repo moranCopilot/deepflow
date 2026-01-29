@@ -1,15 +1,18 @@
 import React from 'react';
-import { ArrowLeft, Heart, Clock, User, Sparkles } from 'lucide-react';
+import { ArrowLeft, Heart, Clock, User, Sparkles, Play, Volume2 } from 'lucide-react';
+import clsx from 'clsx';
 import { type SharedFlowList } from '../data/mock-community';
 import { SCENE_CONFIGS, type SceneTag } from '../config/scene-config';
+import { hasItemScript } from '../utils/script-loader';
 
 interface FlowListDetailPageProps {
   flowList: SharedFlowList;
   onBack: () => void;
   onImport: (flowList: SharedFlowList) => void;
+  onItemClick?: (item: SharedFlowList['items'][number]) => void;
 }
 
-export const FlowListDetailPage: React.FC<FlowListDetailPageProps> = ({ flowList, onBack, onImport }) => {
+export const FlowListDetailPage: React.FC<FlowListDetailPageProps> = ({ flowList, onBack, onImport, onItemClick }) => {
   // 计算总时长
   const totalDuration = flowList.items.reduce((acc, item) => {
     const [min, sec] = (item.duration || '00:00').split(':').map(Number);
@@ -107,10 +110,25 @@ export const FlowListDetailPage: React.FC<FlowListDetailPageProps> = ({ flowList
               const ItemIcon = itemSceneConfig.icon;
               const itemColorClass = SCENE_COLORS[item.sceneTag as string] || SCENE_COLORS['default'];
               
+              const isPlayable = hasItemScript(item.id);
               return (
-                <div key={item.id} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100">
-                  <div className="w-6 text-center text-xs font-bold text-slate-300">
-                    {index + 1}
+                <div
+                  key={item.id}
+                  onClick={() => isPlayable && onItemClick?.(item)}
+                  className={clsx(
+                    "flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100",
+                    isPlayable && "cursor-pointer hover:bg-slate-100 active:bg-slate-200 transition-colors"
+                  )}
+                >
+                  <div className="relative">
+                    <div className="w-6 text-center text-xs font-bold text-slate-300">
+                      {index + 1}
+                    </div>
+                    {isPlayable && (
+                      <div className="absolute -top-1 -right-1 w-3 h-3 bg-indigo-500 rounded-full flex items-center justify-center">
+                        <Volume2 size={6} className="text-white" />
+                      </div>
+                    )}
                   </div>
                   <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${itemColorClass} flex items-center justify-center text-white shrink-0`}>
                     <ItemIcon size={18} />
@@ -124,8 +142,18 @@ export const FlowListDetailPage: React.FC<FlowListDetailPageProps> = ({ flowList
                       <span className="text-[10px] text-slate-400">
                         {itemSceneConfig.label}
                       </span>
+                      {isPlayable && (
+                        <span className="text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                          可播放
+                        </span>
+                      )}
                     </div>
                   </div>
+                  {isPlayable && (
+                    <div className="w-6 h-6 rounded-full bg-indigo-500 flex items-center justify-center">
+                      <Play size={10} className="text-white ml-0.5" />
+                    </div>
+                  )}
                 </div>
               );
             })}

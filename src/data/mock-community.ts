@@ -29,6 +29,10 @@ interface ExternalFlowItem {
   scene: string;
   audioUrl: string;
   script?: { speaker: string; text: string }[] | null;
+  scriptUrl?: string;
+  knowledgeCardsCount?: number;
+  contentCategory?: { main: string; aux: string[] };
+  mode?: 'quick_summary' | 'deep_analysis'; // UGC 模式
 }
 
 interface ExternalSharedFlowList {
@@ -65,25 +69,44 @@ const authors = [
 /* ========== 转换函数 ========== */
 
 // 外部格式 → 内部 FlowItem 格式
-const convertExternalItem = (extItem: ExternalFlowItem): FlowItem => ({
-  id: extItem.id,
-  title: extItem.title,
-  duration: extItem.duration,
-  type: extItem.type,
-  tldr: '这是一个示例 FlowItem 的简介...',
-  subtitles: [],
-  status: 'ready',
-  scenes: [extItem.scene],
-  subject: 'general',
-  mode: 'single',
-  contentType: 'output',
-  sceneTag: extItem.scene as any,
-  isGenerating: false,
-  audioUrl: extItem.audioUrl,
-  script: extItem.script || undefined,
-  knowledgeCards: [],
-  playbackProgress: { hasStarted: false }
-});
+const convertExternalItem = (extItem: ExternalFlowItem): FlowItem => {
+  // UGC mode: 'quick_summary' | 'deep_analysis' → FlowItem mode: 'single' | 'dual'
+  const modeMapping: Record<string, 'single' | 'dual'> = {
+    'quick_summary': 'single',
+    'deep_analysis': 'dual'
+  };
+  const mode = modeMapping[extItem.mode || ''] || 'single';
+
+  const item: FlowItem = {
+    id: extItem.id,
+    title: extItem.title,
+    duration: extItem.duration,
+    type: extItem.type,
+    tldr: '这是一个示例 FlowItem 的简介...',
+    subtitles: [],
+    status: 'ready',
+    scenes: [extItem.scene],
+    subject: 'general',
+    mode,
+    contentType: mode === 'dual' ? 'discussion' : 'output',
+    sceneTag: extItem.scene as any,
+    isGenerating: false,
+    audioUrl: extItem.audioUrl,
+    script: extItem.script || undefined,
+    knowledgeCards: [],
+    playbackProgress: { hasStarted: false }
+  };
+
+  // 扩展字段（用于 UGC 内容）
+  if (extItem.contentCategory) {
+    (item as any).contentCategory = extItem.contentCategory;
+  }
+  if (extItem.scriptUrl) {
+    (item as any).scriptUrl = extItem.scriptUrl;
+  }
+
+  return item;
+};
 
 const convertExternalList = (extList: ExternalSharedFlowList): SharedFlowList => ({
   id: extList.id,
