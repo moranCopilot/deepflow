@@ -120,7 +120,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
               activeSection === 'pgc' ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"
             )}
           >
-            官方精选
+            学家精选
           </button>
           <button
             onClick={() => setActiveSection('ugc')}
