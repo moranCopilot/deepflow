@@ -158,7 +158,7 @@ export const CommunityPage: React.FC<CommunityPageProps> = ({ onImportFlowList, 
                 )}
               >
                 {/* 封面 */}
-                <div className="aspect-square w-full relative overflow-hidden group">
+                <div className="aspect-[4/3] w-full relative overflow-hidden group">
                   {list.coverImage ? (
                     <img
                       src={list.coverImage}
