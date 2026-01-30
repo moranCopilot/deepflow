@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-01-29T16:51:35.113Z",
+  "completed": 9,
+  "total": 9,
+  "errors": [],
+  "results": [
+    {
+      "itemId": "pgc-1-item-1",
+      "audioUrl": "/assets/audio/pgc-1/pgc-1-item-1.mp3",
+      "duration": "05:00"
+    },
+    {
+      "itemId": "pgc-1-item-2",
+      "audioUrl": "/assets/audio/pgc-1/pgc-1-item-2.mp3",
+      "duration": "05:00"
+    },
+    {
+      "itemId": "pgc-1-item-3",
+      "audioUrl": "/assets/audio/pgc-1/pgc-1-item-3.mp3",
+      "duration": "12436:48"
+    },
+    {
+      "itemId": "pgc-2-item-1",
+      "audioUrl": "/assets/audio/pgc-2/pgc-2-item-1.mp3",
+      "duration": "05:00"
+    },
+    {
+      "itemId": "pgc-2-item-2",
+      "audioUrl": "/assets/audio/pgc-2/pgc-2-item-2.mp3",
+      "duration": "05:00"
+    },
+    {
+      "itemId": "pgc-2-item-3",
+      "audioUrl": "/assets/audio/pgc-2/pgc-2-item-3.mp3",
+      "duration": "9529:12"
+    },
+    {
+      "itemId": "pgc-3-item-1",
+      "audioUrl": "/assets/audio/pgc-3/pgc-3-item-1.mp3",
+      "duration": "05:00"
+    },
+    {
+      "itemId": "pgc-3-item-2",
+      "audioUrl": "/assets/audio/pgc-3/pgc-3-item-2.mp3",
+      "duration": "05:00"
+    },
+    {
+      "itemId": "pgc-3-item-3",
+      "audioUrl": "/assets/audio/pgc-3/pgc-3-item-3.mp3",
+      "duration": "19471:12"
+    }
+  ]
+}

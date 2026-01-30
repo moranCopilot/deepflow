@@ -1,0 +1,71 @@
+{
+  "timestamp": "2026-01-29T16:46:40.206Z",
+  "completed": 9,
+  "total": 9,
+  "errors": [],
+  "scripts": [
+    {
+      "itemId": "pgc-1-item-1",
+      "title": "一次函数与二次函数：图像与性质对比",
+      "mode": "quick_summary",
+      "wordCount": 1267,
+      "knowledgeCardsCount": 3
+    },
+    {
+      "itemId": "pgc-1-item-2",
+      "title": "力学三大定律：从受力分析到运动状态",
+      "mode": "quick_summary",
+      "wordCount": 1398,
+      "knowledgeCardsCount": 3
+    },
+    {
+      "itemId": "pgc-1-item-3",
+      "title": "化学方程式配平与质量守恒定律：从“凑数”到“守恒”的本质飞跃",
+      "mode": "deep_analysis",
+      "wordCount": 4004,
+      "knowledgeCardsCount": 6
+    },
+    {
+      "itemId": "pgc-2-item-1",
+      "title": "番茄工作法与专注力训练",
+      "mode": "quick_summary",
+      "wordCount": 1495,
+      "knowledgeCardsCount": 3
+    },
+    {
+      "itemId": "pgc-2-item-2",
+      "title": "5分钟掌握艾宾浩斯遗忘曲线，让你的复习效率翻倍！",
+      "mode": "quick_summary",
+      "wordCount": 1758,
+      "knowledgeCardsCount": 3
+    },
+    {
+      "itemId": "pgc-2-item-3",
+      "title": "古诗文作文素材：如何写活“家国情怀”？",
+      "mode": "deep_analysis",
+      "wordCount": 3042,
+      "knowledgeCardsCount": 6
+    },
+    {
+      "itemId": "pgc-3-item-1",
+      "title": "考场时间分配策略与答题顺序",
+      "mode": "quick_summary",
+      "wordCount": 1433,
+      "knowledgeCardsCount": 4
+    },
+    {
+      "itemId": "pgc-3-item-2",
+      "title": "常见考试失误与避坑指南",
+      "mode": "quick_summary",
+      "wordCount": 1478,
+      "knowledgeCardsCount": 4
+    },
+    {
+      "itemId": "pgc-3-item-3",
+      "title": "考试焦虑自救与积极心态建立：拆解压轴题里的相似三角形",
+      "mode": "deep_analysis",
+      "wordCount": 6317,
+      "knowledgeCardsCount": 5
+    }
+  ]
+}
